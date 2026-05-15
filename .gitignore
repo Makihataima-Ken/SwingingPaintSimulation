@@ -62,6 +62,7 @@ ExportedObj/
 *.mdb
 *.opendb
 *.VC.db
+*.lscache
 
 # Unity3D generated meta files
 *.pidb.meta
@@ -105,3 +106,8 @@ InitTestScene*.unity*
 
 # Auto-generated scenes by play mode tests
 /[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
+
+
+# extension specific ignores
+SwingingPaintSimulation-output.md
+SwingingPaintSimulation-output.txt
