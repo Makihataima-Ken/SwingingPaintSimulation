@@ -1,93 +1,99 @@
 using UnityEngine;
 
 /// <summary>
-/// Renders a rope between a pivot point and a target transform using a LineRenderer.
-/// This script visualizes the connection between the pivot (where this component is attached)
-/// and the moving bucket controlled by the pendulum simulation.
+/// Draws a visual rope between an anchor point and BucketRig using a LineRenderer.
 ///
-/// Design decisions:
-/// - Dynamically adjusts the rope width to visually convey rope tension when elasticity is enabled.
-/// - Reads from Pendulum to get the current stretched length, enabling visual feedback of stretch.
-/// - Keeps the rope rendering independent from the physics logic.
+/// This script is visual only. It does not use Rigidbody, Colliders, joints,
+/// raycasts, or Unity's built-in physics engine.
+/// BucketRig is the pendulum motion point; BucketModel is only the visual child.
 /// </summary>
+[ExecuteAlways]
 [RequireComponent(typeof(LineRenderer))]
 public class RopeRenderer : MonoBehaviour
 {
-    [Header("Target Settings")]
-    [Tooltip("The transform of the bucket at the end of the rope. If not set, will attempt to find a child named 'Bucket'.")]
-    public Transform bucket;
+    [Header("References")]
+    [Tooltip("Anchor point where the rope starts. If empty, this GameObject is used.")]
+    public Transform anchorTransform;
 
-    [Header("Visual Settings")]
-    [Tooltip("Width of the rope.")]
-    public float ropeWidth = 0.05f;
+    [Tooltip("BucketRig transform where the rope ends. Do not assign the visual BucketModel child.")]
+    public Transform bucketTransform;
 
-    [Tooltip("Material for the rope.")]
-    public Material ropeMaterial;
-
-    [Header("Elastic Visuals")]
-    [Tooltip("Reference to the Pendulum component to read current rope length.")]
+    [Tooltip("Optional pendulum reference used to auto-fill anchor and bucket transforms.")]
     public Pendulum pendulum;
 
-    [Tooltip("Scale factor for how much the rope thins when stretched. Higher = more noticeable.")]
-    public float stretchVisualScale = 0.5f;
+    [Header("Visual Settings")]
+    [Tooltip("Width of the rope line.")]
+    public float ropeWidth = 0.04f;
 
-    [Tooltip("Minimum rope width allowed to prevent invisibility.")]
-    public float minRopeWidth = 0.005f;
+    [Tooltip("Optional material used by the LineRenderer.")]
+    public Material ropeMaterial;
 
     private LineRenderer _lineRenderer;
-    private float _baseRopeWidth;
 
-    void Awake()
+    private void Awake()
     {
-        _lineRenderer = GetComponent<LineRenderer>();
+        _lineRenderer = GetOrCreateLineRenderer();
+        ResolveReferences();
+        ConfigureLineRenderer();
+    }
+
+    private void Update()
+    {
+        ResolveReferences();
 
         if (_lineRenderer == null)
         {
-            Debug.LogError("RopeRenderer requires a LineRenderer component.", this);
-            enabled = false;
+            _lineRenderer = GetOrCreateLineRenderer();
+            ConfigureLineRenderer();
+        }
+
+        if (anchorTransform == null || bucketTransform == null)
+        {
             return;
         }
 
-        if (bucket == null)
-        {
-            bucket = transform.Find("Bucket");
-            if (bucket == null)
-            {
-                Debug.LogWarning("RopeRenderer: No bucket assigned and no child named 'Bucket' found.", this);
-            }
-        }
+        // Draw the rope visually by connecting the anchor and bucket positions.
+        _lineRenderer.SetPosition(0, anchorTransform.position);
+        _lineRenderer.SetPosition(1, bucketTransform.position);
+    }
 
+    private void ResolveReferences()
+    {
         if (pendulum == null)
         {
             pendulum = FindObjectOfType<Pendulum>();
         }
 
-        _baseRopeWidth = ropeWidth;
+        if (pendulum != null)
+        {
+            if (anchorTransform == null)
+            {
+                anchorTransform = pendulum.anchorTransform;
+            }
+
+            if (bucketTransform == null)
+            {
+                bucketTransform = pendulum.bucketTransform;
+            }
+        }
+
+        if (anchorTransform == null)
+        {
+            anchorTransform = transform;
+        }
     }
 
-    void Start()
-    {
-        ConfigureLineRenderer();
-    }
-
-    void Update()
-    {
-        if (bucket == null || _lineRenderer == null)
-            return;
-
-        UpdateRopePositions();
-        UpdateElasticVisuals();
-    }
-
-    /// <summary>
-    /// Configures the LineRenderer with the correct number of points and appearance settings.
-    /// </summary>
     private void ConfigureLineRenderer()
     {
+        if (_lineRenderer == null)
+        {
+            return;
+        }
+
         _lineRenderer.positionCount = 2;
+        _lineRenderer.useWorldSpace = true;
         _lineRenderer.startWidth = ropeWidth;
         _lineRenderer.endWidth = ropeWidth;
-        _lineRenderer.useWorldSpace = true;
 
         if (ropeMaterial != null)
         {
@@ -95,55 +101,26 @@ public class RopeRenderer : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Updates the LineRenderer positions to connect the pivot (this transform) to the bucket.
-    /// </summary>
-    private void UpdateRopePositions()
+    private LineRenderer GetOrCreateLineRenderer()
     {
-        _lineRenderer.SetPosition(0, transform.position);
-        _lineRenderer.SetPosition(1, bucket.position);
-    }
-
-    /// <summary>
-    /// Adjusts the rope width based on elastic stretch for visual feedback.
-    /// As the rope stretches, it becomes thinner to simulate tension.
-    /// </summary>
-    private void UpdateElasticVisuals()
-    {
-        if (pendulum == null)
-            return;
-
-        // Calculate a thinness factor based on stretch ratio
-        float restLength = 1f; // Default if pendulum settings are unavailable
-        float currentLength = pendulum.CurrentRopeLength;
-
-        if (pendulum.settings != null)
+        LineRenderer lineRenderer = GetComponent<LineRenderer>();
+        if (lineRenderer == null)
         {
-            restLength = pendulum.settings.RestLength;
+            lineRenderer = gameObject.AddComponent<LineRenderer>();
         }
 
-        if (restLength > 0f)
-        {
-            float stretchRatio = currentLength / restLength;
-            float widthFactor = 1f - ((stretchRatio - 1f) * stretchVisualScale);
-            float newWidth = Mathf.Max(minRopeWidth, _baseRopeWidth * widthFactor);
-
-            _lineRenderer.startWidth = newWidth;
-            _lineRenderer.endWidth = newWidth;
-        }
+        return lineRenderer;
     }
 
-    /// <summary>
-    /// Updates the rope width at runtime (useful for inspector changes or dynamic effects).
-    /// </summary>
-    public void SetRopeWidth(float width)
+    private void OnValidate()
     {
-        ropeWidth = width;
-        _baseRopeWidth = width;
-        if (_lineRenderer != null)
+        ropeWidth = Mathf.Max(0.001f, ropeWidth);
+
+        LineRenderer lineRenderer = GetComponent<LineRenderer>();
+        if (lineRenderer != null)
         {
-            _lineRenderer.startWidth = width;
-            _lineRenderer.endWidth = width;
+            lineRenderer.startWidth = ropeWidth;
+            lineRenderer.endWidth = ropeWidth;
         }
     }
 }
