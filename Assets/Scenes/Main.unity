@@ -361,9 +361,9 @@ MonoBehaviour:
   bucketTransform: {fileID: 45000002}
   simulationSettings: {fileID: 0}
   ropeLength: 1.98
-  initialAngleDegrees: 52.6
-  initialAngularVelocity: 100
-  directionAngleDegrees: 90
+  initialAngleDegrees: 0
+  initialAngularVelocity: 0
+  directionAngleDegrees: 0
   damping: 0.05
   gravity: 9.81
   drawDebugGizmos: 1
@@ -719,6 +719,11 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 45000002}
+  - component: {fileID: 45000003}
+  - component: {fileID: 45000004}
+  - component: {fileID: 45000005}
+  - component: {fileID: 45000006}
+  - component: {fileID: 45000007}
   m_Layer: 0
   m_Name: BucketRig
   m_TagString: Untagged
@@ -741,8 +746,148 @@ Transform:
   m_Children:
   - {fileID: 87824954}
   - {fileID: 46000002}
+  - {fileID: 47000002}
   m_Father: {fileID: 40000002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &45000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 45000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4710fd02a4e340718b780c7f01185374, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  developmentParticleCount: 2000
+  presentationParticleCount: 20000
+  presentationMode: 0
+  particleRadius: 0.035
+  smoothingRadius: 0.11
+  gravity: 9.81
+  restDensity: 1000
+  pressureStiffness: 120
+  nearPressureStiffness: 180
+  viscosity: 0.45
+  surfaceTension: 0.25
+  cohesion: 0.2
+  drag: 0.03
+  substeps: 2
+  solverIterations: 4
+  maxVelocity: 2
+  damping: 0.02
+  bucketHeight: 0.85
+  bottomRadius: 0.34
+  topRadius: 0.47
+  bottomY: -0.75
+  topY: 0.1
+  fillHeightPercent: 0.55
+  spawnJitter: 0.16
+  randomSeed: 12345
+  useHexPacking: 1
+  wallDamping: 0.45
+  wallFriction: 0.25
+  paintColor: {r: 0.05, g: 0.22, b: 0.95, a: 1}
+  particleVisualSize: 0.045
+  opacity: 0.92
+  smoothness: 0.75
+  metallic: 0
+  useGPU: 1
+  enableDebug: 1
+  drawBoundaryGizmos: 1
+--- !u!114 &45000004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 45000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 28968317f61e4708af375839b342de7d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  bucketTransform: {fileID: 45000002}
+  settings: {fileID: 45000003}
+  gravity: 9.81
+  accelerationSmoothing: 0.25
+  drawDebugGizmos: 1
+  velocityGizmoScale: 0.15
+  accelerationGizmoScale: 0.04
+  velocityGizmoColor: {r: 0, g: 1, b: 1, a: 1}
+  accelerationGizmoColor: {r: 1, g: 0.35, b: 0.05, a: 1}
+--- !u!114 &45000005
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 45000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5bf4f07f457a40f7b0f1d0bedce79e25, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  bucketVisualModel: {fileID: 87824954}
+  boundaryLocalCenterOffset: {x: 0, y: 0, z: 0}
+  bottomY: -0.33
+  topY: -0.12
+  bottomRadius: 0.0801
+  topRadius: 0.12001
+  clampTop: 1
+  wallDamping: 0.45
+  wallFriction: 0.25
+  drawBoundaryGizmos: 1
+  gizmoRingCount: 6
+  gizmoColor: {r: 0.1, g: 0.7, b: 1, a: 0.6}
+--- !u!114 &45000006
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 45000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4637777ddaf4d259ebe39712f7e25ef, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  settings: {fileID: 45000003}
+  fluidComputeShader: {fileID: 7200000, guid: bced192c20be48e88ac05553fe160ba9, type: 3}
+  motionProvider: {fileID: 45000004}
+  boundary: {fileID: 45000005}
+  boundaryCollisionEnabled: 1
+  pauseSimulation: 0
+  pauseAfterReset: 1
+  stepSimulationOnce: 0
+  spatialGridEnabled: 1
+  hashTableSize: 4096
+  maxParticlesPerCell: 64
+  spatialGridDebugReadbackInterval: 0.25
+--- !u!114 &45000007
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 45000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76cbdf7d3e544d8b98fa57e4f7560986, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  simulator: {fileID: 45000006}
+  motionProvider: {fileID: 45000004}
+  fluidRenderer: {fileID: 47000003}
+  showPanel: 1
+  panelRect:
+    serializedVersion: 2
+    x: 12
+    y: 12
+    width: 380
+    height: 610
 --- !u!1 &46000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -774,6 +919,58 @@ Transform:
   m_Children: []
   m_Father: {fileID: 45000002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &47000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 47000002}
+  - component: {fileID: 47000003}
+  m_Layer: 0
+  m_Name: FluidRenderer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &47000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 47000001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 45000002}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &47000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 47000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c04f58966f1642b0b9369380f65fea41, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  simulator: {fileID: 45000006}
+  particleMesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+  particleMaterial: {fileID: 2100000, guid: bf5b2d6f195e45e4a2f8a59f07377652, type: 2}
+  renderBounds:
+    m_Center: {x: 0, y: -0.35, z: 0}
+    m_Extent: {x: 1, y: 1, z: 1}
+  renderEnabled: 1
+  renderRadius: 0.045
 --- !u!4 &87824954 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 114cf661adfa3ae43aa88405e356a70b, type: 3}
@@ -838,6 +1035,10 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: 114cf661adfa3ae43aa88405e356a70b, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 114cf661adfa3ae43aa88405e356a70b, type: 3}
+      propertyPath: m_ConstrainProportionsScale
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 114cf661adfa3ae43aa88405e356a70b, type: 3}
       propertyPath: m_Name

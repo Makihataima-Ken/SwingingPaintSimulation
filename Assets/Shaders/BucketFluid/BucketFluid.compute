@@ -1,0 +1,357 @@
+// Placeholder compute shader for the custom bucket-local fluid solver.
+// Future kernels should keep particle positions in BucketRig local space.
+//
+// Important: this struct order must match GPUFluidSimulator.FluidParticle exactly.
+// Each float3 is followed by a scalar to keep the layout in 16-byte lanes.
+
+#pragma kernel InitParticles
+#pragma kernel ApplyForces
+#pragma kernel PredictPositions
+#pragma kernel ClearSpatialGrid
+#pragma kernel BuildSpatialGrid
+#pragma kernel BuildSpatialHash
+#pragma kernel ComputeDensity
+#pragma kernel SolveConstraints
+#pragma kernel ApplyViscosity
+#pragma kernel ResolveBoundary
+#pragma kernel UpdateParticles
+
+struct FluidParticle
+{
+    float3 positionLocal;
+    float density;
+
+    float3 predictedPositionLocal;
+    float nearDensity;
+
+    float3 velocityLocal;
+    float pressure;
+
+    float3 deltaPosition;
+    float nearPressure;
+
+    int active;
+    int cellHash;
+    int cellIndex;
+    float padding;
+};
+
+RWStructuredBuffer<FluidParticle> particles;
+RWStructuredBuffer<uint> cellParticleCounts;
+RWStructuredBuffer<uint> cellParticleIndices;
+RWStructuredBuffer<uint> spatialGridCounters;
+uint _ParticleCount;
+float DeltaTime;
+float3 EffectiveLocalAcceleration;
+float Drag;
+float MaxVelocity;
+float3 BoundaryLocalCenterOffset;
+float BottomY;
+float TopY;
+float BottomRadius;
+float TopRadius;
+int ClampTop;
+float WallDamping;
+float WallFriction;
+float ParticleRadius;
+float SpatialCellSize;
+uint HashTableSize;
+uint MaxParticlesPerCell;
+
+static const float BoundaryEpsilon = 0.00001;
+
+float RadiusAtY(float y)
+{
+    float height = max(TopY - BottomY, BoundaryEpsilon);
+    float relativeY = y - BoundaryLocalCenterOffset.y;
+    float t = saturate((relativeY - BottomY) / height);
+    return lerp(BottomRadius, TopRadius, t);
+}
+
+float3 ClampVelocity(float3 velocity)
+{
+    float speed = length(velocity);
+    if (MaxVelocity > 0.0 && speed > MaxVelocity)
+    {
+        return velocity / max(speed, BoundaryEpsilon) * MaxVelocity;
+    }
+
+    return velocity;
+}
+
+void ResolveTruncatedConeBoundary(inout float3 position, inout float3 velocity)
+{
+    if (!all(position == position))
+    {
+        position = BoundaryLocalCenterOffset + float3(0.0, BottomY + ParticleRadius, 0.0);
+    }
+
+    if (!all(velocity == velocity))
+    {
+        velocity = float3(0.0, 0.0, 0.0);
+    }
+
+    float radius = max(0.0, ParticleRadius);
+    float bounceFactor = saturate(1.0 - WallDamping);
+    float frictionFactor = saturate(1.0 - WallFriction);
+    float bottomLimit = BoundaryLocalCenterOffset.y + BottomY + radius;
+    float topLimit = BoundaryLocalCenterOffset.y + TopY - radius;
+
+    if (topLimit < bottomLimit)
+    {
+        float midpoint = BoundaryLocalCenterOffset.y + (BottomY + TopY) * 0.5;
+        bottomLimit = midpoint;
+        topLimit = midpoint;
+    }
+
+    if (position.y < bottomLimit)
+    {
+        position.y = bottomLimit;
+
+        if (velocity.y < 0.0)
+        {
+            velocity.y = -velocity.y * bounceFactor;
+        }
+
+        velocity.xz *= frictionFactor;
+    }
+
+    if (ClampTop != 0 && position.y > topLimit)
+    {
+        position.y = topLimit;
+
+        if (velocity.y > 0.0)
+        {
+            velocity.y = -velocity.y * bounceFactor;
+        }
+
+        velocity.xz *= frictionFactor;
+    }
+
+    float allowedRadius = max(0.0, RadiusAtY(position.y) - radius);
+    float2 horizontal = position.xz - BoundaryLocalCenterOffset.xz;
+    float distanceSq = dot(horizontal, horizontal);
+    float allowedRadiusSq = allowedRadius * allowedRadius;
+
+    if (distanceSq > allowedRadiusSq)
+    {
+        float distance = sqrt(max(distanceSq, BoundaryEpsilon));
+        float2 radialDirection = horizontal / distance;
+        position.xz = BoundaryLocalCenterOffset.xz + radialDirection * allowedRadius;
+
+        float3 normal = float3(radialDirection.x, 0.0, radialDirection.y);
+        float outwardVelocity = dot(velocity, normal);
+        float3 normalVelocity = normal * outwardVelocity;
+        float3 tangentVelocity = velocity - normalVelocity;
+
+        tangentVelocity *= frictionFactor;
+
+        if (outwardVelocity > 0.0)
+        {
+            velocity = tangentVelocity - normal * outwardVelocity * bounceFactor;
+        }
+        else
+        {
+            velocity = tangentVelocity + normalVelocity;
+        }
+    }
+
+    velocity = ClampVelocity(velocity);
+}
+
+int3 GetCellCoord(float3 position)
+{
+    float safeCellSize = max(SpatialCellSize, BoundaryEpsilon);
+    return (int3)floor((position - BoundaryLocalCenterOffset) / safeCellSize);
+}
+
+uint HashCell(int3 cell)
+{
+    uint x = (uint)cell.x;
+    uint y = (uint)cell.y;
+    uint z = (uint)cell.z;
+    return (x * 73856093u) ^ (y * 19349663u) ^ (z * 83492791u);
+}
+
+uint CellIndex(int3 cell)
+{
+    uint safeHashTableSize = max(HashTableSize, 1u);
+    return HashCell(cell) % safeHashTableSize;
+}
+
+[numthreads(64, 1, 1)]
+void InitParticles(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+}
+
+[numthreads(64, 1, 1)]
+void ApplyForces(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+
+    FluidParticle particle = particles[id.x];
+    if (particle.active == 0)
+    {
+        return;
+    }
+
+    particle.velocityLocal += EffectiveLocalAcceleration * DeltaTime;
+
+    float dragFactor = max(0.0, 1.0 - Drag * DeltaTime);
+    particle.velocityLocal *= dragFactor;
+
+    particle.velocityLocal = ClampVelocity(particle.velocityLocal);
+
+    particles[id.x] = particle;
+}
+
+[numthreads(64, 1, 1)]
+void PredictPositions(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+
+    FluidParticle particle = particles[id.x];
+    if (particle.active == 0)
+    {
+        return;
+    }
+
+    particle.predictedPositionLocal = particle.positionLocal + particle.velocityLocal * DeltaTime;
+    particles[id.x] = particle;
+}
+
+[numthreads(64, 1, 1)]
+void ClearSpatialGrid(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < HashTableSize)
+    {
+        cellParticleCounts[id.x] = 0u;
+    }
+
+    if (id.x == 0u)
+    {
+        spatialGridCounters[0] = 0u;
+        spatialGridCounters[1] = 0u;
+    }
+}
+
+[numthreads(64, 1, 1)]
+void BuildSpatialGrid(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+
+    FluidParticle particle = particles[id.x];
+    if (particle.active == 0)
+    {
+        return;
+    }
+
+    int3 cellCoord = GetCellCoord(particle.predictedPositionLocal);
+    uint hashedCell = CellIndex(cellCoord);
+    uint previousCount;
+    InterlockedAdd(cellParticleCounts[hashedCell], 1u, previousCount);
+
+    if (previousCount < MaxParticlesPerCell)
+    {
+        uint storageIndex = hashedCell * MaxParticlesPerCell + previousCount;
+        cellParticleIndices[storageIndex] = id.x;
+        InterlockedAdd(spatialGridCounters[0], 1u);
+
+        particle.cellHash = (int)hashedCell;
+        particle.cellIndex = (int)previousCount;
+    }
+    else
+    {
+        InterlockedAdd(spatialGridCounters[1], 1u);
+
+        particle.cellHash = (int)hashedCell;
+        particle.cellIndex = -1;
+    }
+
+    particles[id.x] = particle;
+}
+
+[numthreads(64, 1, 1)]
+void BuildSpatialHash(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+}
+
+[numthreads(64, 1, 1)]
+void ComputeDensity(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+}
+
+[numthreads(64, 1, 1)]
+void SolveConstraints(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+}
+
+[numthreads(64, 1, 1)]
+void ApplyViscosity(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+}
+
+[numthreads(64, 1, 1)]
+void ResolveBoundary(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+
+    FluidParticle particle = particles[id.x];
+    if (particle.active == 0)
+    {
+        return;
+    }
+
+    ResolveTruncatedConeBoundary(particle.predictedPositionLocal, particle.velocityLocal);
+    particles[id.x] = particle;
+}
+
+[numthreads(64, 1, 1)]
+void UpdateParticles(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount)
+    {
+        return;
+    }
+
+    FluidParticle particle = particles[id.x];
+    if (particle.active == 0)
+    {
+        return;
+    }
+
+    particle.positionLocal = particle.predictedPositionLocal;
+    particles[id.x] = particle;
+}
