@@ -6,6 +6,11 @@ using UnityEngine;
 /// This script is visual only. It does not use Rigidbody, Colliders, joints,
 /// raycasts, or Unity's built-in physics engine.
 /// BucketRig is the pendulum motion point; BucketModel is only the visual child.
+///
+/// Because the Pendulum now moves BucketRig to the dynamic (stretched) rope length, the line
+/// between the anchor and the bucket already grows and shrinks on its own. This component is
+/// extended (not replaced) with optional stretch feedback: as the rope extends beyond its rest
+/// length it can thin out and tint toward a "stretched" colour, making the elasticity visible.
 /// </summary>
 [ExecuteAlways]
 [RequireComponent(typeof(LineRenderer))]
@@ -18,15 +23,32 @@ public class RopeRenderer : MonoBehaviour
     [Tooltip("BucketRig transform where the rope ends. Do not assign the visual BucketModel child.")]
     public Transform bucketTransform;
 
-    [Tooltip("Optional pendulum reference used to auto-fill anchor and bucket transforms.")]
+    [Tooltip("Optional pendulum reference used to auto-fill anchor and bucket transforms and to read rope stretch.")]
     public Pendulum pendulum;
 
     [Header("Visual Settings")]
-    [Tooltip("Width of the rope line.")]
+    [Tooltip("Width of the rope line at rest length.")]
     public float ropeWidth = 0.04f;
 
     [Tooltip("Optional material used by the LineRenderer.")]
     public Material ropeMaterial;
+
+    [Header("Stretch Feedback (optional)")]
+    [Tooltip("When on, the rope thins and changes colour as it stretches beyond its rest length. Purely cosmetic.")]
+    public bool reflectStretch = true;
+
+    [Tooltip("Rope colour at or below rest length.")]
+    public Color slackColor = Color.white;
+
+    [Tooltip("Rope colour when stretched to fully extended (see fullStretchRatio).")]
+    public Color stretchedColor = new Color(1f, 0.4f, 0.2f, 1f);
+
+    [Tooltip("Extension ratio ((length - rest) / rest) treated as 'fully stretched' for colour/width blending.")]
+    public float fullStretchRatio = 0.5f;
+
+    [Tooltip("Width multiplier applied at full stretch (a real rope gets thinner as it stretches). 1 = no thinning.")]
+    [Range(0.1f, 1f)]
+    public float stretchedWidthScale = 0.6f;
 
     private LineRenderer _lineRenderer;
 
@@ -53,8 +75,40 @@ public class RopeRenderer : MonoBehaviour
         }
 
         // Draw the rope visually by connecting the anchor and bucket positions.
+        // The bucket position already reflects stretch/contraction, so the line length follows it.
         _lineRenderer.SetPosition(0, anchorTransform.position);
         _lineRenderer.SetPosition(1, bucketTransform.position);
+
+        ApplyStretchFeedback();
+    }
+
+    /// <summary>
+    /// Drives line width and colour from how far the rope is currently stretched beyond rest length.
+    /// No-op (and resets to the slack look) when stretch feedback is disabled or no pendulum is known.
+    /// </summary>
+    private void ApplyStretchFeedback()
+    {
+        if (!reflectStretch || pendulum == null)
+        {
+            _lineRenderer.startWidth = ropeWidth;
+            _lineRenderer.endWidth = ropeWidth;
+            return;
+        }
+
+        float rest = pendulum.RestLength;
+        float current = pendulum.CurrentRopeLength;
+
+        // Extension ratio, normalised so 0 = rest length and 1 = "fully stretched".
+        float denominator = Mathf.Max(0.0001f, fullStretchRatio);
+        float extensionRatio = rest > 0f ? Mathf.Clamp01((current / rest - 1f) / denominator) : 0f;
+
+        float width = ropeWidth * Mathf.Lerp(1f, stretchedWidthScale, extensionRatio);
+        _lineRenderer.startWidth = width;
+        _lineRenderer.endWidth = width;
+
+        Color color = Color.Lerp(slackColor, stretchedColor, extensionRatio);
+        _lineRenderer.startColor = color;
+        _lineRenderer.endColor = color;
     }
 
     private void ResolveReferences()
@@ -115,6 +169,8 @@ public class RopeRenderer : MonoBehaviour
     private void OnValidate()
     {
         ropeWidth = Mathf.Max(0.001f, ropeWidth);
+        fullStretchRatio = Mathf.Max(0.01f, fullStretchRatio);
+        stretchedWidthScale = Mathf.Clamp(stretchedWidthScale, 0.1f, 1f);
 
         LineRenderer lineRenderer = GetComponent<LineRenderer>();
         if (lineRenderer != null)
