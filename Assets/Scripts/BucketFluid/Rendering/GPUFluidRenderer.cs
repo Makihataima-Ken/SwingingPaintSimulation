@@ -159,6 +159,10 @@ namespace SwingingPaint.BucketFluid.Rendering
             {
                 missing.Add("Missing particle material");
             }
+            else if (!particleMaterial.enableInstancing)
+            {
+                particleMaterial.enableInstancing = true;
+            }
 
             if (missing.Count == 0)
             {

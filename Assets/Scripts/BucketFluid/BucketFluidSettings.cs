@@ -176,9 +176,10 @@ namespace SwingingPaint.BucketFluid
         [Range(0f, 1f)]
         public float metallic = 0f;
 
-        // Enables the GPU compute path. Leave true for the intended high-particle simulation.
+        // Enables the GPU compute path. This project is GPU-only for fluid simulation, so the
+        // value is forced on during validation.
         [Header("Performance")]
-        [Tooltip("Use GPU compute buffers and shaders for the fluid simulation.")]
+        [Tooltip("GPU-only fluid simulation. This is forced on; there is no CPU simulation fallback.")]
         public bool useGPU = true;
 
         // Enables additional debug readouts and validation aids. Disable for presentation.
@@ -195,6 +196,8 @@ namespace SwingingPaint.BucketFluid
 
         private void OnValidate()
         {
+            useGPU = true;
+
             developmentParticleCount = Mathf.Max(1, developmentParticleCount);
             presentationParticleCount = Mathf.Max(1, presentationParticleCount);
 

@@ -104,6 +104,7 @@ namespace SwingingPaint.BucketFluid.Core
         public int InitializedParticleCount { get; private set; }
         public int RuntimeActiveParticleCount { get; private set; }
         public bool HasRequiredReferences => settings != null && fluidComputeShader != null && motionProvider != null && boundary != null;
+        public bool HasGpuComputeSupport => SystemInfo.supportsComputeShaders;
         public bool HasParticleBuffer => _particleBuffer != null;
         public bool ParticleBufferValid => _particleBuffer != null && _particleBuffer.IsValid();
         public int ParticleBufferCount => _particleBuffer != null ? _particleBuffer.count : 0;
@@ -233,6 +234,12 @@ namespace SwingingPaint.BucketFluid.Core
                 return;
             }
 
+            if (!ValidateGpuPath())
+            {
+                ReleaseParticleBuffer();
+                return;
+            }
+
             if (!HasValidParticleStride)
             {
                 ReleaseParticleBuffer();
@@ -355,6 +362,11 @@ namespace SwingingPaint.BucketFluid.Core
                 return;
             }
 
+            if (!ValidateGpuPath())
+            {
+                return;
+            }
+
             if (SimulationManager.Instance != null && SimulationManager.Instance.IsPaused)
             {
                 return;
@@ -426,6 +438,16 @@ namespace SwingingPaint.BucketFluid.Core
                 missingFields.Add("Missing Fluid Compute Shader");
             }
 
+            if (settings != null && !settings.useGPU)
+            {
+                missingFields.Add("GPU fluid disabled in settings (this project has no CPU fluid simulation fallback)");
+            }
+
+            if (!HasGpuComputeSupport)
+            {
+                missingFields.Add("Current graphics device does not support compute shaders");
+            }
+
             if (missingFields.Count == 0)
             {
                 _hasWarnedMissingReferences = false;
@@ -470,6 +492,34 @@ namespace SwingingPaint.BucketFluid.Core
 
             _kernelsResolved = true;
             _hasLoggedKernelError = false;
+            return true;
+        }
+
+        private bool ValidateGpuPath()
+        {
+            if (settings == null)
+            {
+                return false;
+            }
+
+            if (!settings.useGPU)
+            {
+                Debug.LogError("GPUFluidSimulator is GPU-only, but BucketFluidSettings.useGPU is false.", this);
+                return false;
+            }
+
+            if (!HasGpuComputeSupport)
+            {
+                Debug.LogError("GPUFluidSimulator requires compute shader support. No CPU fluid fallback is available.", this);
+                return false;
+            }
+
+            if (fluidComputeShader == null)
+            {
+                Debug.LogError("GPUFluidSimulator requires BucketFluid.compute. No CPU fluid fallback is available.", this);
+                return false;
+            }
+
             return true;
         }
 
