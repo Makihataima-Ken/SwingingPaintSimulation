@@ -155,6 +155,10 @@ namespace SwingingPaint.Core
             physicsSettings.SetInitialAngle(30f);
             physicsSettings.SetAngularVelocity(0f);
             physicsSettings.SetDirection(0f);
+            physicsSettings.SetBucketMass(1.2f);
+            physicsSettings.SetPaintMass(1f);
+            physicsSettings.SetAirResistance(0.02f);
+            physicsSettings.SetSwingCountLimit(0);
             physicsSettings.SetRestLength(2f);
             physicsSettings.SetRopeStiffness(50f);
             physicsSettings.SetRopeElasticity(0.5f);

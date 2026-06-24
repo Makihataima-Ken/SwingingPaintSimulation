@@ -35,6 +35,18 @@ namespace SwingingPaint.Core
         [Tooltip("Direction in the XZ plane in degrees (0 = along X axis).")]
         [SerializeField] private float direction = 0f;
 
+        [Tooltip("Dry bucket mass in kilograms.")]
+        [SerializeField] private float bucketMass = 1.2f;
+
+        [Tooltip("Remaining paint mass in kilograms.")]
+        [SerializeField] private float paintMass = 1f;
+
+        [Tooltip("Linear air resistance coefficient for custom motion.")]
+        [SerializeField] private float airResistance = 0.02f;
+
+        [Tooltip("Maximum completed half-swings before motion stops. 0 means unlimited.")]
+        [SerializeField] private int swingCountLimit = 0;
+
         // ------------------------------------------------------------------
         // Rope Elasticity Parameters
         // ------------------------------------------------------------------
@@ -78,6 +90,11 @@ namespace SwingingPaint.Core
         public float InitialAngle => initialAngle;
         public float AngularVelocity => angularVelocity;
         public float Direction => direction;
+        public float BucketMass => bucketMass;
+        public float PaintMass => paintMass;
+        public float TotalMovingMass => bucketMass + paintMass;
+        public float AirResistance => airResistance;
+        public int SwingCountLimit => swingCountLimit;
 
         public float RestLength => restLength;
         public float RopeStiffness => ropeStiffness;
@@ -134,6 +151,34 @@ namespace SwingingPaint.Core
         {
             if (Mathf.Approximately(direction, value)) return;
             direction = value;
+            NotifyChanged();
+        }
+
+        public void SetBucketMass(float value)
+        {
+            if (Mathf.Approximately(bucketMass, value)) return;
+            bucketMass = Mathf.Max(0.01f, value);
+            NotifyChanged();
+        }
+
+        public void SetPaintMass(float value)
+        {
+            if (Mathf.Approximately(paintMass, value)) return;
+            paintMass = Mathf.Max(0f, value);
+            NotifyChanged();
+        }
+
+        public void SetAirResistance(float value)
+        {
+            if (Mathf.Approximately(airResistance, value)) return;
+            airResistance = Mathf.Max(0f, value);
+            NotifyChanged();
+        }
+
+        public void SetSwingCountLimit(int value)
+        {
+            if (swingCountLimit == value) return;
+            swingCountLimit = Mathf.Max(0, value);
             NotifyChanged();
         }
 
@@ -202,6 +247,10 @@ namespace SwingingPaint.Core
             // Ensure all values are within safe ranges when edited in the Inspector
             gravity = Mathf.Max(0f, gravity);
             damping = Mathf.Max(0f, damping);
+            bucketMass = Mathf.Max(0.01f, bucketMass);
+            paintMass = Mathf.Max(0f, paintMass);
+            airResistance = Mathf.Max(0f, airResistance);
+            swingCountLimit = Mathf.Max(0, swingCountLimit);
             restLength = Mathf.Max(0.01f, restLength);
             ropeStiffness = Mathf.Max(0.01f, ropeStiffness);
             ropeElasticity = Mathf.Max(0f, ropeElasticity);

@@ -15,15 +15,16 @@ using SwingingPaint.Core;
 /// the rigid rod into a stretchy rope by making the rope length r a second dynamic degree of
 /// freedom governed by Hooke's Law (F = -k * x).
 ///
-/// The bucket is treated as a unit-mass point in the vertical swing plane defined by
+/// The bucket is treated as a point mass in the vertical swing plane defined by
 /// directionAngleDegrees (phi) in the horizontal XZ canvas plane. The state is the polar pair
 /// (r, theta): r is the current rope length, theta is the angle from the downward vertical.
-/// The standard elastic-pendulum equations of motion (unit mass) are:
+/// The elastic-pendulum equations of motion use total moving mass:
 ///
 ///     extension x   = r - restLength                      (signed stretch)
-///     springAccel   = (k_eff * x) if x > 0 else 0         (a rope pulls, it never pushes)
-///     r''     = r * theta'^2 + g * cos(theta) - springAccel - ropeDamping * r'
-///     theta'' = (-g * sin(theta) - 2 * r' * theta') / r   - damping * theta'
+///     movingMass    = bucketMass + paintMass
+///     springAccel   = (k_eff * x) / movingMass if x > 0 else 0
+///     r''     = r * theta'^2 + g * cos(theta) - springAccel - dampingForce / movingMass
+///     theta'' = (-g * sin(theta) - 2 * r' * theta') / r - damping * theta' - airDrag / movingMass
 ///
 /// where:
 ///   * k_eff   = ropeStiffness / (1 + ropeElasticity)  -- elasticity softens the spring so a
@@ -69,6 +70,19 @@ public class Pendulum : MonoBehaviour
     [Tooltip("Manual gravitational acceleration used by the pendulum equation.")]
     public float gravity = 9.81f;
 
+    [Header("Moving Mass")]
+    [Tooltip("Dry bucket mass in kilograms for the custom pendulum model.")]
+    public float bucketMass = 1.2f;
+
+    [Tooltip("Remaining paint mass inside the bucket in kilograms. Future pouring systems should reduce this value.")]
+    public float paintMass = 1f;
+
+    [Tooltip("Linear air resistance coefficient applied to radial and angular custom motion.")]
+    public float airResistance = 0.02f;
+
+    [Tooltip("Maximum completed half-swings before motion is stopped. 0 means unlimited.")]
+    public int swingCountLimit = 0;
+
     [Header("Elastic Rope")]
     [FormerlySerializedAs("ropeLength")]
     [Tooltip("Rest (unstretched) length of the rope in world units. The Hooke restoring force pulls the bucket back toward this length.")]
@@ -109,6 +123,12 @@ public class Pendulum : MonoBehaviour
     /// <summary>Smallest length the rope is allowed to shrink to. Avoids the 1/r singularity in the angular equation.</summary>
     private const float MinLength = 0.05f;
 
+    /// <summary>Smallest mass used in divisions. Avoids invalid acceleration when values are edited aggressively.</summary>
+    private const float MinMovingMass = 0.01f;
+
+    /// <summary>Dead-zone around vertical so numerical jitter does not double-count swings.</summary>
+    private const float SwingCountDeadZoneDegrees = 0.25f;
+
     /// <summary>Hard cap on sub-steps per frame so a pathological dt can never spin forever.</summary>
     private const int MaxSubStepsPerFrame = 64;
 
@@ -123,6 +143,15 @@ public class Pendulum : MonoBehaviour
 
     /// <summary>Rest (unstretched) rope length. Convenience accessor for visual/UI scripts.</summary>
     public float RestLength => restLength;
+
+    /// <summary>Total mass moved by the rope: dry bucket plus remaining paint.</summary>
+    public float TotalMovingMass => Mathf.Max(MinMovingMass, bucketMass + paintMass);
+
+    /// <summary>Number of completed half-swings across the vertical since the last reset.</summary>
+    public int CompletedSwingCount => _completedSwingCount;
+
+    /// <summary>True once swingCountLimit has been reached. A limit of 0 is unlimited.</summary>
+    public bool SwingLimitReached => _swingLimitReached;
 
     /// <summary>
     /// Backward-compatible alias for the old fixed-length field. Reads/writes the rope rest length so
@@ -145,6 +174,10 @@ public class Pendulum : MonoBehaviour
     private float _currentLength;
     private float _lengthVelocity;
     private float _maxRopeExtension;
+    private int _completedSwingCount;
+    private int _lastSwingSide;
+    private bool _hasSwingCounterState;
+    private bool _swingLimitReached;
     private Vector3 _previousBucketPosition;
     private bool _hasPreviousBucketPosition;
 
@@ -175,6 +208,12 @@ public class Pendulum : MonoBehaviour
 
         if (SimulationManager.Instance != null && SimulationManager.Instance.IsPaused)
         {
+            return;
+        }
+
+        if (_swingLimitReached)
+        {
+            BucketVelocity = Vector3.zero;
             return;
         }
 
@@ -214,17 +253,30 @@ public class Pendulum : MonoBehaviour
         _currentAngularVelocity = angularVelocityDegrees;
 
         // Static equilibrium extension: at rest the spring balances gravity along the rope,
-        // k_eff * x = g * cos(theta)  =>  x = g * cos(theta) / k_eff (only when it pulls down).
+        // k_eff * x / m = g * cos(theta)  =>  x = m * g * cos(theta) / k_eff.
         float kEff = EffectiveStiffness();
+        float movingMass = TotalMovingMass;
         float gravityAlongRope = gravity * Mathf.Cos(angleDegrees * Mathf.Deg2Rad);
-        float equilibriumExtension = kEff > 0f ? Mathf.Max(0f, gravityAlongRope) / kEff : 0f;
+        float equilibriumExtension = kEff > 0f ? movingMass * Mathf.Max(0f, gravityAlongRope) / kEff : 0f;
 
         _currentLength = Mathf.Clamp(restLength + equilibriumExtension, MinLength, restLength * Mathf.Max(1f, maxStretchMultiplier));
         _lengthVelocity = 0f;
         _maxRopeExtension = 0f;
+        _completedSwingCount = 0;
+        _lastSwingSide = SignWithDeadZone(_currentAngleDegrees);
+        _hasSwingCounterState = _lastSwingSide != 0;
+        _swingLimitReached = false;
 
         ApplyBucketPosition();
         ResetBucketVelocityTracking();
+    }
+
+    /// <summary>
+    /// Updates the remaining paint mass. Pouring will call this later; clamped here for safety.
+    /// </summary>
+    public void SetPaintMass(float value)
+    {
+        paintMass = Mathf.Max(0f, value);
     }
 
     /// <summary>
@@ -255,7 +307,7 @@ public class Pendulum : MonoBehaviour
         float step = Mathf.Max(0.0005f, maxSubStep);
 
         int guard = 0;
-        while (remaining > 0f && guard++ < MaxSubStepsPerFrame)
+        while (remaining > 0f && guard++ < MaxSubStepsPerFrame && !_swingLimitReached)
         {
             float h = Mathf.Min(remaining, step);
             IntegrateStep(h);
@@ -276,21 +328,24 @@ public class Pendulum : MonoBehaviour
         float rDot = _lengthVelocity;
 
         float kEff = EffectiveStiffness();
+        float movingMass = TotalMovingMass;
         float extension = r - restLength;
 
         // Hooke's Law: a rope only pulls (inward), it never pushes. No force while slack (x <= 0).
-        float springAccel = extension > 0f ? kEff * extension : 0f;
+        float springAccel = extension > 0f ? kEff * extension / movingMass : 0f;
+        float radialDampingAccel = (ropeDamping + airResistance) * rDot / movingMass;
 
-        // Radial equation of motion (unit mass): centrifugal + gravity-along-rope - spring - radial damping.
+        // Radial equation of motion: centrifugal + gravity-along-rope - spring - custom damping.
         float radialAccel = r * thetaDot * thetaDot
                             + gravity * Mathf.Cos(theta)
                             - springAccel
-                            - ropeDamping * rDot;
+                            - radialDampingAccel;
 
         // Angular equation of motion. Guard the 1/r term against a near-zero length.
         float safeR = Mathf.Max(r, MinLength);
         float angularAccel = (-gravity * Mathf.Sin(theta) - 2f * rDot * thetaDot) / safeR
-                            - damping * thetaDot;
+                            - damping * thetaDot
+                            - (airResistance * thetaDot / movingMass);
 
         // Symplectic Euler: integrate velocities, then positions.
         rDot += radialAccel * h;
@@ -319,16 +374,72 @@ public class Pendulum : MonoBehaviour
         // Keep theta in [-pi, pi] for numerical cleanliness and stable debug readouts.
         theta = Mathf.Repeat(theta + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
 
+        float previousAngleDegrees = _currentAngleDegrees;
         _currentAngleDegrees = theta * Mathf.Rad2Deg;
         _currentAngularVelocity = thetaDot * Mathf.Rad2Deg;
         _currentLength = r;
         _lengthVelocity = rDot;
+
+        UpdateSwingCounter(previousAngleDegrees, _currentAngleDegrees);
 
         float positiveExtension = Mathf.Max(0f, r - restLength);
         if (positiveExtension > _maxRopeExtension)
         {
             _maxRopeExtension = positiveExtension;
         }
+    }
+
+    private void UpdateSwingCounter(float previousAngleDegrees, float currentAngleDegrees)
+    {
+        if (swingCountLimit <= 0 || _swingLimitReached)
+        {
+            return;
+        }
+
+        int currentSide = SignWithDeadZone(currentAngleDegrees);
+        if (currentSide == 0)
+        {
+            return;
+        }
+
+        if (!_hasSwingCounterState)
+        {
+            int previousSide = SignWithDeadZone(previousAngleDegrees);
+            _lastSwingSide = previousSide != 0 ? previousSide : currentSide;
+            _hasSwingCounterState = true;
+            return;
+        }
+
+        if (currentSide == _lastSwingSide)
+        {
+            return;
+        }
+
+        _lastSwingSide = currentSide;
+        _completedSwingCount++;
+
+        if (_completedSwingCount >= swingCountLimit)
+        {
+            _currentAngularVelocity = 0f;
+            _lengthVelocity = 0f;
+            BucketVelocity = Vector3.zero;
+            _swingLimitReached = true;
+        }
+    }
+
+    private static int SignWithDeadZone(float angleDegrees)
+    {
+        if (angleDegrees > SwingCountDeadZoneDegrees)
+        {
+            return 1;
+        }
+
+        if (angleDegrees < -SwingCountDeadZoneDegrees)
+        {
+            return -1;
+        }
+
+        return 0;
     }
 
     private void ApplyBucketPosition()
@@ -380,6 +491,10 @@ public class Pendulum : MonoBehaviour
         ropeElasticity = Mathf.Max(0f, ropeElasticity);
         damping = Mathf.Max(0f, damping);
         gravity = Mathf.Max(0f, gravity);
+        bucketMass = Mathf.Max(MinMovingMass, bucketMass);
+        paintMass = Mathf.Max(0f, paintMass);
+        airResistance = Mathf.Max(0f, airResistance);
+        swingCountLimit = Mathf.Max(0, swingCountLimit);
 
         maxSubStep = Mathf.Clamp(maxSubStep, 0.0005f, 0.05f);
         maxFrameTime = Mathf.Clamp(maxFrameTime, maxSubStep, 0.5f);
