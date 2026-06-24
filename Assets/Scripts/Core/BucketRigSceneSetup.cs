@@ -25,18 +25,24 @@ public class BucketRigSceneSetup : MonoBehaviour
     [Tooltip("Automatically reassign references when values change in the editor.")]
     public bool autoAssignOnValidate = true;
 
+    [Tooltip("Keep PaintHole and RopeAttachment positions aligned to BucketFluidBoundary.")]
+    public bool alignMarkersToBoundary = true;
+
+    [Tooltip("How far below the mathematical bucket bottom the PaintHole emission origin sits.")]
+    public float paintHoleOffsetBelowBottom = 0.025f;
+
     private void OnEnable()
     {
-        AssignReferences(createMissingRopeRenderer: true);
+        AssignReferences(createMissingRopeRenderer: true, createMissingMarkers: true);
     }
 
     [ContextMenu("Assign Bucket Rig References")]
     public void AssignReferences()
     {
-        AssignReferences(createMissingRopeRenderer: true);
+        AssignReferences(createMissingRopeRenderer: true, createMissingMarkers: true);
     }
 
-    private void AssignReferences(bool createMissingRopeRenderer)
+    private void AssignReferences(bool createMissingRopeRenderer, bool createMissingMarkers)
     {
         Transform root = transform.name == "SimulationRoot" ? transform : FindChildOrSelf(transform, "SimulationRoot");
         if (root == null)
@@ -48,7 +54,13 @@ public class BucketRigSceneSetup : MonoBehaviour
         Transform bucketRig = root.Find("BucketRig");
         Transform ropePlaceholder = root.Find("RopePlaceholder");
         Transform bucketVisual = bucketRig != null ? bucketRig.Find("Bucket") : null;
-        Transform ropeAttachment = bucketRig != null ? EnsureRopeAttachment(bucketRig) : null;
+        BucketFluidBoundary boundary = bucketRig != null ? bucketRig.GetComponent<BucketFluidBoundary>() : null;
+        Transform paintHole = bucketRig != null
+            ? EnsurePaintHole(bucketRig, boundary, alignMarkersToBoundary, paintHoleOffsetBelowBottom, createMissingMarkers)
+            : null;
+        Transform ropeAttachment = bucketRig != null
+            ? EnsureRopeAttachment(bucketRig, boundary, alignMarkersToBoundary, createMissingMarkers)
+            : null;
 
         Pendulum pendulum = root.GetComponent<Pendulum>();
         if (pendulum != null)
@@ -73,6 +85,8 @@ public class BucketRigSceneSetup : MonoBehaviour
                 ropeRenderer.pendulum = pendulum;
             }
         }
+
+        ConfigureMarkerGizmos(boundary, paintHole, ropeAttachment, pivotPoint, createMissingMarkers);
 
         if (bucketRig != null)
         {
@@ -124,12 +138,62 @@ public class BucketRigSceneSetup : MonoBehaviour
         proceduralBucket.Rebuild();
     }
 
-    private static Transform EnsureRopeAttachment(Transform bucketRig)
+    private static Transform EnsurePaintHole(
+        Transform bucketRig,
+        BucketFluidBoundary boundary,
+        bool alignToBoundary,
+        float offsetBelowBottom,
+        bool createMissing
+    )
+    {
+        Transform paintHole = bucketRig.Find("PaintHole");
+        if (paintHole == null)
+        {
+            if (!createMissing)
+            {
+                return null;
+            }
+
+            GameObject paintHoleObject = new GameObject("PaintHole");
+            paintHole = paintHoleObject.transform;
+            paintHole.SetParent(bucketRig, false);
+        }
+
+        paintHole.localRotation = Quaternion.identity;
+        paintHole.localScale = Vector3.one;
+
+        if (alignToBoundary && boundary != null)
+        {
+            paintHole.localPosition = boundary.GetPaintHoleLocal(offsetBelowBottom);
+        }
+
+        return paintHole;
+    }
+
+    private static Transform EnsureRopeAttachment(
+        Transform bucketRig,
+        BucketFluidBoundary boundary,
+        bool alignToBoundary,
+        bool createMissing
+    )
     {
         Transform existing = bucketRig.Find("RopeAttachment");
         if (existing != null)
         {
+            existing.localRotation = Quaternion.identity;
+            existing.localScale = Vector3.one;
+
+            if (alignToBoundary && boundary != null)
+            {
+                existing.localPosition = boundary.GetRopeAttachmentLocal();
+            }
+
             return existing;
+        }
+
+        if (!createMissing)
+        {
+            return null;
         }
 
         GameObject attachmentObject = new GameObject("RopeAttachment");
@@ -138,11 +202,9 @@ public class BucketRigSceneSetup : MonoBehaviour
         attachment.localRotation = Quaternion.identity;
         attachment.localScale = Vector3.one;
 
-        BucketFluidBoundary boundary = bucketRig.GetComponent<BucketFluidBoundary>();
-        if (boundary != null)
+        if (alignToBoundary && boundary != null)
         {
-            Vector3 center = boundary.boundaryLocalCenterOffset;
-            attachment.localPosition = new Vector3(center.x, center.y + boundary.topY, center.z);
+            attachment.localPosition = boundary.GetRopeAttachmentLocal();
         }
         else
         {
@@ -152,11 +214,57 @@ public class BucketRigSceneSetup : MonoBehaviour
         return attachment;
     }
 
+    private static void ConfigureMarkerGizmos(
+        BucketFluidBoundary boundary,
+        Transform paintHole,
+        Transform ropeAttachment,
+        Transform pivotPoint,
+        bool createMissing
+    )
+    {
+        if (paintHole != null)
+        {
+            PaintHoleGizmo paintHoleGizmo = paintHole.GetComponent<PaintHoleGizmo>();
+            if (paintHoleGizmo == null)
+            {
+                if (createMissing)
+                {
+                    paintHoleGizmo = paintHole.gameObject.AddComponent<PaintHoleGizmo>();
+                }
+            }
+
+            if (paintHoleGizmo != null)
+            {
+                paintHoleGizmo.bucketBoundary = boundary;
+            }
+        }
+
+        if (ropeAttachment != null)
+        {
+            RopeAttachmentGizmo ropeAttachmentGizmo = ropeAttachment.GetComponent<RopeAttachmentGizmo>();
+            if (ropeAttachmentGizmo == null)
+            {
+                if (createMissing)
+                {
+                    ropeAttachmentGizmo = ropeAttachment.gameObject.AddComponent<RopeAttachmentGizmo>();
+                }
+            }
+
+            if (ropeAttachmentGizmo != null)
+            {
+                ropeAttachmentGizmo.bucketBoundary = boundary;
+                ropeAttachmentGizmo.anchorTransform = pivotPoint;
+            }
+        }
+    }
+
     private void OnValidate()
     {
+        paintHoleOffsetBelowBottom = Mathf.Max(0f, paintHoleOffsetBelowBottom);
+
         if (autoAssignOnValidate)
         {
-            AssignReferences(createMissingRopeRenderer: false);
+            AssignReferences(createMissingRopeRenderer: false, createMissingMarkers: false);
         }
     }
 
