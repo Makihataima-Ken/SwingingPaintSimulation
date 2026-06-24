@@ -166,6 +166,22 @@ public class Pendulum : MonoBehaviour
     /// <summary>Largest rope extension (beyond rest length) observed since the last reset.</summary>
     public float MaxRopeExtension => _maxRopeExtension;
 
+    /// <summary>Current positive rope extension beyond rest length.</summary>
+    public float CurrentRopeExtension => Mathf.Max(0f, _currentLength - restLength);
+
+    /// <summary>Current custom Hooke tension in the rope. Zero when the rope is slack.</summary>
+    public float CurrentRopeTension => _currentRopeTension;
+
+    /// <summary>Normalizes current tension against a safe visual reference for rendering feedback.</summary>
+    public float NormalizedRopeTension
+    {
+        get
+        {
+            float reference = Mathf.Max(0.001f, EffectiveStiffness() * restLength * 0.25f);
+            return Mathf.Clamp01(_currentRopeTension / reference);
+        }
+    }
+
     /// <summary>Current manually calculated bucket velocity in world units per second.</summary>
     public Vector3 BucketVelocity { get; private set; }
 
@@ -174,6 +190,7 @@ public class Pendulum : MonoBehaviour
     private float _currentLength;
     private float _lengthVelocity;
     private float _maxRopeExtension;
+    private float _currentRopeTension;
     private int _completedSwingCount;
     private int _lastSwingSide;
     private bool _hasSwingCounterState;
@@ -261,6 +278,7 @@ public class Pendulum : MonoBehaviour
 
         _currentLength = Mathf.Clamp(restLength + equilibriumExtension, MinLength, restLength * Mathf.Max(1f, maxStretchMultiplier));
         _lengthVelocity = 0f;
+        _currentRopeTension = kEff * Mathf.Max(0f, _currentLength - restLength);
         _maxRopeExtension = 0f;
         _completedSwingCount = 0;
         _lastSwingSide = SignWithDeadZone(_currentAngleDegrees);
@@ -332,7 +350,8 @@ public class Pendulum : MonoBehaviour
         float extension = r - restLength;
 
         // Hooke's Law: a rope only pulls (inward), it never pushes. No force while slack (x <= 0).
-        float springAccel = extension > 0f ? kEff * extension / movingMass : 0f;
+        float springTension = extension > 0f ? kEff * extension : 0f;
+        float springAccel = springTension / movingMass;
         float radialDampingAccel = (ropeDamping + airResistance) * rDot / movingMass;
 
         // Radial equation of motion: centrifugal + gravity-along-rope - spring - custom damping.
@@ -379,6 +398,7 @@ public class Pendulum : MonoBehaviour
         _currentAngularVelocity = thetaDot * Mathf.Rad2Deg;
         _currentLength = r;
         _lengthVelocity = rDot;
+        _currentRopeTension = EffectiveStiffness() * Mathf.Max(0f, _currentLength - restLength);
 
         UpdateSwingCounter(previousAngleDegrees, _currentAngleDegrees);
 

@@ -11,11 +11,12 @@ using SwingingPaint.BucketFluid.Rendering;
 /// - Canvas
 /// - BucketRig
 ///   - BucketModel
+///   - RopeAttachment
 ///   - PaintHole
 /// - RopePlaceholder
 ///
 /// BucketRig is the physics/motion point moved by Pendulum. BucketModel is visual only,
-/// and PaintHole marks the future emission point near the bottom of the bucket.
+/// RopeAttachment is the visual rope endpoint, and PaintHole marks the future emission point near the bottom of the bucket.
 /// This helper does not use Rigidbody, Colliders, or Unity physics.
 /// </summary>
 [ExecuteAlways]
@@ -47,6 +48,7 @@ public class BucketRigSceneSetup : MonoBehaviour
         Transform bucketRig = root.Find("BucketRig");
         Transform ropePlaceholder = root.Find("RopePlaceholder");
         Transform bucketVisual = bucketRig != null ? bucketRig.Find("Bucket") : null;
+        Transform ropeAttachment = bucketRig != null ? EnsureRopeAttachment(bucketRig) : null;
 
         Pendulum pendulum = root.GetComponent<Pendulum>();
         if (pendulum != null)
@@ -67,6 +69,7 @@ public class BucketRigSceneSetup : MonoBehaviour
             {
                 ropeRenderer.anchorTransform = pivotPoint;
                 ropeRenderer.bucketTransform = bucketRig;
+                ropeRenderer.attachmentTransform = ropeAttachment;
                 ropeRenderer.pendulum = pendulum;
             }
         }
@@ -119,6 +122,34 @@ public class BucketRigSceneSetup : MonoBehaviour
 
         proceduralBucket.boundary = bucketRig.GetComponent<BucketFluidBoundary>();
         proceduralBucket.Rebuild();
+    }
+
+    private static Transform EnsureRopeAttachment(Transform bucketRig)
+    {
+        Transform existing = bucketRig.Find("RopeAttachment");
+        if (existing != null)
+        {
+            return existing;
+        }
+
+        GameObject attachmentObject = new GameObject("RopeAttachment");
+        Transform attachment = attachmentObject.transform;
+        attachment.SetParent(bucketRig, false);
+        attachment.localRotation = Quaternion.identity;
+        attachment.localScale = Vector3.one;
+
+        BucketFluidBoundary boundary = bucketRig.GetComponent<BucketFluidBoundary>();
+        if (boundary != null)
+        {
+            Vector3 center = boundary.boundaryLocalCenterOffset;
+            attachment.localPosition = new Vector3(center.x, center.y + boundary.topY, center.z);
+        }
+        else
+        {
+            attachment.localPosition = Vector3.zero;
+        }
+
+        return attachment;
     }
 
     private void OnValidate()
