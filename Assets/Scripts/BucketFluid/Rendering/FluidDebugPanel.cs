@@ -74,6 +74,11 @@ namespace SwingingPaint.BucketFluid.Rendering
             GUILayout.Label($"Max Particles/Cell: {(simulator != null ? simulator.SpatialMaxParticlesPerCell : 0)}");
             GUILayout.Label($"Grid Inserted: {(simulator != null && simulator.SpatialGridCountersAvailable ? simulator.SpatialGridInsertedCount.ToString() : "n/a")}");
             GUILayout.Label($"Grid Overflow: {(simulator != null && simulator.SpatialGridCountersAvailable ? simulator.SpatialGridOverflowCount.ToString() : "n/a")}");
+            GUILayout.Label($"Validation Available: {simulator != null && simulator.ParticleValidationAvailable}");
+            GUILayout.Label($"Invalid Particles: {(simulator != null && simulator.ParticleValidationAvailable ? simulator.InvalidParticleCount.ToString() : "n/a")}");
+            GUILayout.Label($"Boundary Leaks: {(simulator != null && simulator.ParticleValidationAvailable ? simulator.BoundaryLeakCount.ToString() : "n/a")}");
+            GUILayout.Label($"Max Velocity: {(simulator != null && simulator.ParticleValidationAvailable ? simulator.MaxObservedVelocity.ToString("F2") : "n/a")}");
+            GUILayout.Label($"Average Density: {(simulator != null && simulator.ParticleValidationAvailable ? simulator.AverageObservedDensity.ToString("F2") : "n/a")}");
             GUILayout.Label($"Effective Accel: {FormatVector(motionProvider != null ? motionProvider.EffectiveLocalAcceleration : Vector3.zero)}");
             GUILayout.Label("Boundary Source: BucketFluidBoundary");
             GUILayout.Label($"Boundary Collision: {simulator != null && simulator.BoundaryCollisionEnabled}");
