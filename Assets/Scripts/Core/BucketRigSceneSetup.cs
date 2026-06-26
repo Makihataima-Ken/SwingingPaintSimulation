@@ -1,6 +1,8 @@
 using UnityEngine;
+using SwingingPaint.BucketFluid;
 using SwingingPaint.BucketFluid.Core;
 using SwingingPaint.BucketFluid.Rendering;
+using SwingingPaint.Paint;
 
 /// <summary>
 /// Editor-safe scene helper for assigning the Swinging Paint bucket rig references by name.
@@ -224,6 +226,8 @@ public class BucketRigSceneSetup : MonoBehaviour
     {
         if (paintHole != null)
         {
+            ConfigurePaintEmitter(boundary, paintHole, createMissing);
+
             PaintHoleGizmo paintHoleGizmo = paintHole.GetComponent<PaintHoleGizmo>();
             if (paintHoleGizmo == null)
             {
@@ -256,6 +260,31 @@ public class BucketRigSceneSetup : MonoBehaviour
                 ropeAttachmentGizmo.anchorTransform = pivotPoint;
             }
         }
+    }
+
+    private static void ConfigurePaintEmitter(
+        BucketFluidBoundary boundary,
+        Transform paintHole,
+        bool createMissing
+    )
+    {
+        PaintEmitter paintEmitter = paintHole.GetComponent<PaintEmitter>();
+        if (paintEmitter == null)
+        {
+            if (!createMissing)
+            {
+                return;
+            }
+
+            paintEmitter = paintHole.gameObject.AddComponent<PaintEmitter>();
+        }
+
+        Transform bucketRig = boundary != null ? boundary.transform : paintHole.parent;
+        paintEmitter.paintHoleTransform = paintHole;
+        paintEmitter.bucketTransform = bucketRig;
+        paintEmitter.boundary = boundary;
+        paintEmitter.fluidSettings = bucketRig != null ? bucketRig.GetComponent<BucketFluidSettings>() : null;
+        paintEmitter.motionProvider = bucketRig != null ? bucketRig.GetComponent<BucketMotionProvider>() : null;
     }
 
     private void OnValidate()

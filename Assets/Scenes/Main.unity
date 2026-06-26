@@ -423,6 +423,7 @@ GameObject:
   - component: {fileID: 42000002}
   - component: {fileID: 42000004}
   - component: {fileID: 42000003}
+  - component: {fileID: 42000005}
   m_Layer: 0
   m_Name: Canvas
   m_TagString: Untagged
@@ -495,6 +496,31 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 42000001}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!114 &42000005
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 42000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1e0b38845e5949cb8f55a5a3348d9a0b, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  physicsSettings: {fileID: 0}
+  targetRenderer: {fileID: 42000003}
+  useTransformPlane: 1
+  surfaceLocalY: 0.5
+  fallbackCanvasSize: {x: 5, y: 3}
+  textureWidth: 1024
+  textureHeight: 1024
+  drySurfaceColor: {r: 0.94, g: 0.92, b: 0.86, a: 1}
+  defaultAbsorption: 0.1
+  minImpactRadius: 0.025
+  maxImpactRadius: 0.45
+  opacityMultiplier: 0.85
+  flowSpreadBoost: 0.15
 --- !u!1 &44000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -897,6 +923,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 46000002}
+  - component: {fileID: 46000003}
   m_Layer: 0
   m_Name: PaintHole
   m_TagString: Untagged
@@ -919,6 +946,47 @@ Transform:
   m_Children: []
   m_Father: {fileID: 45000002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &46000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 46000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 24f0e18f8d804b478bb53deb1bfa0b03, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  physicsSettings: {fileID: 0}
+  fluidSettings: {fileID: 45000003}
+  motionProvider: {fileID: 45000004}
+  boundary: {fileID: 45000005}
+  paintSurface: {fileID: 42000005}
+  paintHoleTransform: {fileID: 46000002}
+  bucketTransform: {fileID: 45000002}
+  emitWhilePlaying: 1
+  resetOnEnable: 1
+  holeDiameter: 0.035
+  defaultFlowRate: 1
+  defaultPaintViscosity: 0.5
+  defaultPaintQuantity: 100
+  paintMassPerQuantityUnit: 0.01
+  syncPaintMassToPhysicsSettings: 0
+  dropletAmount: 0.02
+  minDropletRadius: 0.008
+  maxDropletRadius: 0.035
+  exitSpeedMultiplier: 1
+  emissionJitter: 0.02
+  maxDroplets: 2048
+  dropletLifetime: 6
+  gravity: 9.81
+  airResistance: 0.08
+  viscosityDampingMultiplier: 0.35
+  drawDroplets: 1
+  dropletMesh: {fileID: 0}
+  dropletMaterial: {fileID: 0}
+  depositOnPaintSurface: 1
 --- !u!1 &47000001
 GameObject:
   m_ObjectHideFlags: 0
