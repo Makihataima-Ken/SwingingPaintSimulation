@@ -355,8 +355,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7ac1803dc102a3f44ae964a9ea3272e1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   anchorTransform: {fileID: 41000002}
   bucketTransform: {fileID: 45000002}
   simulationSettings: {fileID: 0}
@@ -378,8 +378,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 518be9b9f80744b398d099b844b7acdf, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   autoAssignOnValidate: 1
 --- !u!1 &41000001
 GameObject:
@@ -508,7 +508,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1e0b38845e5949cb8f55a5a3348d9a0b, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  physicsSettings: {fileID: 0}
+  physicsSettings: {fileID: 11400000, guid: 6d3641a49fd24e6e8078197debdc1eb4, type: 2}
   targetRenderer: {fileID: 42000003}
   useTransformPlane: 1
   surfaceLocalY: 0.5
@@ -616,10 +616,11 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 69559710f80763342b24073a794123d4, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   anchorTransform: {fileID: 41000002}
   bucketTransform: {fileID: 45000002}
+  attachmentTransform: {fileID: 49000002}
   pendulum: {fileID: 40000003}
   ropeWidth: 0.04
   ropeMaterial: {fileID: 0}
@@ -750,6 +751,7 @@ GameObject:
   - component: {fileID: 45000005}
   - component: {fileID: 45000006}
   - component: {fileID: 45000007}
+  - component: {fileID: 45000008}
   m_Layer: 0
   m_Name: BucketRig
   m_TagString: Untagged
@@ -772,6 +774,7 @@ Transform:
   m_Children:
   - {fileID: 87824954}
   - {fileID: 46000002}
+  - {fileID: 49000002}
   - {fileID: 47000002}
   m_Father: {fileID: 40000002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -821,7 +824,7 @@ MonoBehaviour:
   smoothness: 0.75
   metallic: 0
   useGPU: 1
-  enableDebug: 1
+  enableDebug: 0
   drawBoundaryGizmos: 1
 --- !u!114 &45000004
 MonoBehaviour:
@@ -886,7 +889,7 @@ MonoBehaviour:
   boundary: {fileID: 45000005}
   boundaryCollisionEnabled: 1
   pauseSimulation: 0
-  pauseAfterReset: 1
+  pauseAfterReset: 0
   stepSimulationOnce: 0
   spatialGridEnabled: 1
   hashTableSize: 4096
@@ -907,13 +910,39 @@ MonoBehaviour:
   simulator: {fileID: 45000006}
   motionProvider: {fileID: 45000004}
   fluidRenderer: {fileID: 47000003}
-  showPanel: 1
+  showPanel: 0
   panelRect:
     serializedVersion: 2
     x: 12
     y: 12
     width: 380
     height: 610
+--- !u!114 &45000008
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 45000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0b515d24bffb4fbfa604800f6c1c01b0, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  pivotPoint: {fileID: 41000002}
+  bucketRig: {fileID: 45000002}
+  ropeAttachment: {fileID: 49000002}
+  bucketVisualRoot: {fileID: 87824954}
+  paintHole: {fileID: 46000002}
+  bucketLocalUpAxis: {x: 0, y: 1, z: 0}
+  bucketLocalForwardAxis: {x: 0, y: 0, z: 1}
+  rotationSmoothSpeed: 12
+  maxVisualLagAngle: 0
+  rollAmount: 0
+  alignToRope: 1
+  drawGizmos: 1
+  gizmoLength: 0.4
+  useSimulationManagerDriver: 1
 --- !u!1 &46000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -958,7 +987,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 24f0e18f8d804b478bb53deb1bfa0b03, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  physicsSettings: {fileID: 0}
+  physicsSettings: {fileID: 11400000, guid: 6d3641a49fd24e6e8078197debdc1eb4, type: 2}
   fluidSettings: {fileID: 45000003}
   motionProvider: {fileID: 45000004}
   boundary: {fileID: 45000005}
@@ -987,6 +1016,57 @@ MonoBehaviour:
   dropletMesh: {fileID: 0}
   dropletMaterial: {fileID: 0}
   depositOnPaintSurface: 1
+--- !u!1 &49000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 49000002}
+  - component: {fileID: 49000003}
+  m_Layer: 0
+  m_Name: RopeAttachment
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &49000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 49000001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -0.12, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 45000002}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &49000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 49000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e7a6290b9ed04b1e9b37c50b59b2104d, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  anchorTransform: {fileID: 41000002}
+  bucketBoundary: {fileID: 45000005}
+  drawGizmo: 1
+  radius: 0.06
+  directionLength: 0.25
+  drawLineToAnchor: 1
+  gizmoColor: {r: 1, g: 0.85, b: 0.1, a: 1}
 --- !u!1 &47000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -1039,6 +1119,63 @@ MonoBehaviour:
     m_Extent: {x: 1, y: 1, z: 1}
   renderEnabled: 1
   renderRadius: 0.045
+--- !u!1 &48000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 48000002}
+  - component: {fileID: 48000003}
+  m_Layer: 0
+  m_Name: SimulationManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &48000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 48000001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &48000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 48000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4ddb4002c5357434994c70dfb3288913, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  physicsSettings: {fileID: 11400000, guid: 6d3641a49fd24e6e8078197debdc1eb4, type: 2}
+  pendulum: {fileID: 40000003}
+  bucketOrientationController: {fileID: 45000008}
+  simulationSettings: {fileID: 0}
+  bucketMotionProvider: {fileID: 45000004}
+  fluidSimulator: {fileID: 45000006}
+  paintEmitter: {fileID: 46000003}
+  paintSurface: {fileID: 42000005}
+  uiController: {fileID: 0}
+  driveFixedStepSimulation: 1
+  fixedTimestep: 0.016666668
+  maxStepsPerRenderedFrame: 4
+  maxAccumulatedTime: 0.12
 --- !u!4 &87824954 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 114cf661adfa3ae43aa88405e356a70b, type: 3}

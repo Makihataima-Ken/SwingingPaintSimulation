@@ -51,6 +51,35 @@ namespace SwingingPaint.BucketFluid.Core
         private const string SpatialCellSizeName = "SpatialCellSize";
         private const string HashTableSizeName = "HashTableSize";
         private const string MaxParticlesPerCellName = "MaxParticlesPerCell";
+        private static readonly int ParticlesBufferId = Shader.PropertyToID(ParticlesBufferName);
+        private static readonly int ParticleCountId = Shader.PropertyToID(ParticleCountName);
+        private static readonly int DeltaTimeId = Shader.PropertyToID(DeltaTimeName);
+        private static readonly int EffectiveLocalAccelerationId = Shader.PropertyToID(EffectiveLocalAccelerationName);
+        private static readonly int DragId = Shader.PropertyToID(DragName);
+        private static readonly int MaxVelocityId = Shader.PropertyToID(MaxVelocityName);
+        private static readonly int BoundaryLocalCenterOffsetId = Shader.PropertyToID(BoundaryLocalCenterOffsetName);
+        private static readonly int BottomYId = Shader.PropertyToID(BottomYName);
+        private static readonly int TopYId = Shader.PropertyToID(TopYName);
+        private static readonly int BottomRadiusId = Shader.PropertyToID(BottomRadiusName);
+        private static readonly int TopRadiusId = Shader.PropertyToID(TopRadiusName);
+        private static readonly int ClampTopId = Shader.PropertyToID(ClampTopName);
+        private static readonly int WallDampingId = Shader.PropertyToID(WallDampingName);
+        private static readonly int WallFrictionId = Shader.PropertyToID(WallFrictionName);
+        private static readonly int ParticleRadiusId = Shader.PropertyToID(ParticleRadiusName);
+        private static readonly int SmoothingRadiusId = Shader.PropertyToID(SmoothingRadiusName);
+        private static readonly int RestDensityId = Shader.PropertyToID(RestDensityName);
+        private static readonly int PressureStiffnessId = Shader.PropertyToID(PressureStiffnessName);
+        private static readonly int NearPressureStiffnessId = Shader.PropertyToID(NearPressureStiffnessName);
+        private static readonly int ViscosityId = Shader.PropertyToID(ViscosityName);
+        private static readonly int SurfaceTensionId = Shader.PropertyToID(SurfaceTensionName);
+        private static readonly int CohesionId = Shader.PropertyToID(CohesionName);
+        private static readonly int DampingId = Shader.PropertyToID(DampingName);
+        private static readonly int CellParticleCountsBufferId = Shader.PropertyToID(CellParticleCountsBufferName);
+        private static readonly int CellParticleIndicesBufferId = Shader.PropertyToID(CellParticleIndicesBufferName);
+        private static readonly int SpatialGridCountersBufferId = Shader.PropertyToID(SpatialGridCountersBufferName);
+        private static readonly int SpatialCellSizeId = Shader.PropertyToID(SpatialCellSizeName);
+        private static readonly int HashTableSizeId = Shader.PropertyToID(HashTableSizeName);
+        private static readonly int MaxParticlesPerCellId = Shader.PropertyToID(MaxParticlesPerCellName);
 
         /// <summary>
         /// CPU-side copy of the particle layout used by BucketFluid.compute.
@@ -94,8 +123,10 @@ namespace SwingingPaint.BucketFluid.Core
         [Tooltip("Keeps particles inside the mathematical bucket boundary after predicted motion.")]
         public bool boundaryCollisionEnabled = true;
         public bool pauseSimulation;
-        public bool pauseAfterReset = true;
+        public bool pauseAfterReset = false;
         public bool stepSimulationOnce;
+        [Tooltip("Skip this component's FixedUpdate loop when SimulationManager is driving fixed-step simulation.")]
+        public bool useSimulationManagerDriver = true;
 
         [Header("Spatial Grid")]
         public bool spatialGridEnabled = true;
@@ -207,6 +238,13 @@ namespace SwingingPaint.BucketFluid.Core
 
         private void FixedUpdate()
         {
+            if (useSimulationManagerDriver &&
+                SimulationManager.Instance != null &&
+                SimulationManager.Instance.driveFixedStepSimulation)
+            {
+                return;
+            }
+
             if (pauseSimulation && !stepSimulationOnce)
             {
                 SimulationRunning = false;
@@ -281,7 +319,10 @@ namespace SwingingPaint.BucketFluid.Core
             FluidParticle[] particles = CreateInitialParticles(targetParticleCount);
             int activeBeforeUpload = CountActiveParticles(particles);
 
-            LogResetDiagnostics(particles, targetParticleCount, activeBeforeUpload);
+            if (settings.enableDebug)
+            {
+                LogResetDiagnostics(particles, targetParticleCount, activeBeforeUpload);
+            }
 
             _particleBuffer = new ComputeBuffer(particles.Length, FluidParticleStride, ComputeBufferType.Structured);
             _particleBuffer.SetData(particles);
@@ -305,7 +346,15 @@ namespace SwingingPaint.BucketFluid.Core
             {
                 pauseSimulation = true;
                 stepSimulationOnce = false;
-                Debug.Log("Fluid reset and simulation paused for inspection.", this);
+                if (settings.enableDebug)
+                {
+                    Debug.Log("Fluid reset and simulation paused for inspection.", this);
+                }
+            }
+            else
+            {
+                pauseSimulation = false;
+                stepSimulationOnce = false;
             }
         }
 
@@ -382,7 +431,7 @@ namespace SwingingPaint.BucketFluid.Core
 #endif
         }
 
-        private void StepSimulation(float deltaTime)
+        public void StepSimulation(float deltaTime)
         {
             SimulationRunning = false;
             LastSimulationSubsteps = 0;
@@ -600,58 +649,58 @@ namespace SwingingPaint.BucketFluid.Core
 
         private void SetSimulationShaderParameters(float deltaTime)
         {
-            fluidComputeShader.SetInt(ParticleCountName, InitializedParticleCount);
-            fluidComputeShader.SetFloat(DeltaTimeName, deltaTime);
-            fluidComputeShader.SetVector(EffectiveLocalAccelerationName, motionProvider.EffectiveLocalAcceleration);
-            fluidComputeShader.SetFloat(DragName, settings.drag);
-            fluidComputeShader.SetFloat(MaxVelocityName, settings.maxVelocity);
-            fluidComputeShader.SetVector(BoundaryLocalCenterOffsetName, boundary.boundaryLocalCenterOffset);
-            fluidComputeShader.SetFloat(BottomYName, boundary.bottomY);
-            fluidComputeShader.SetFloat(TopYName, boundary.topY);
-            fluidComputeShader.SetFloat(BottomRadiusName, boundary.bottomRadius);
-            fluidComputeShader.SetFloat(TopRadiusName, boundary.topRadius);
-            fluidComputeShader.SetInt(ClampTopName, boundary.clampTop ? 1 : 0);
-            fluidComputeShader.SetFloat(WallDampingName, boundary.wallDamping);
-            fluidComputeShader.SetFloat(WallFrictionName, boundary.wallFriction);
-            fluidComputeShader.SetFloat(ParticleRadiusName, settings.particleRadius);
-            fluidComputeShader.SetFloat(SmoothingRadiusName, settings.smoothingRadius);
-            fluidComputeShader.SetFloat(RestDensityName, settings.restDensity);
-            fluidComputeShader.SetFloat(PressureStiffnessName, settings.pressureStiffness);
-            fluidComputeShader.SetFloat(NearPressureStiffnessName, settings.nearPressureStiffness);
-            fluidComputeShader.SetFloat(ViscosityName, settings.viscosity);
-            fluidComputeShader.SetFloat(SurfaceTensionName, settings.surfaceTension);
-            fluidComputeShader.SetFloat(CohesionName, settings.cohesion);
-            fluidComputeShader.SetFloat(DampingName, settings.damping);
-            fluidComputeShader.SetFloat(SpatialCellSizeName, SpatialCellSize);
-            fluidComputeShader.SetInt(HashTableSizeName, _activeHashTableSize);
-            fluidComputeShader.SetInt(MaxParticlesPerCellName, _activeMaxParticlesPerCell);
+            fluidComputeShader.SetInt(ParticleCountId, InitializedParticleCount);
+            fluidComputeShader.SetFloat(DeltaTimeId, deltaTime);
+            fluidComputeShader.SetVector(EffectiveLocalAccelerationId, motionProvider.EffectiveLocalAcceleration);
+            fluidComputeShader.SetFloat(DragId, settings.drag);
+            fluidComputeShader.SetFloat(MaxVelocityId, settings.maxVelocity);
+            fluidComputeShader.SetVector(BoundaryLocalCenterOffsetId, boundary.boundaryLocalCenterOffset);
+            fluidComputeShader.SetFloat(BottomYId, boundary.bottomY);
+            fluidComputeShader.SetFloat(TopYId, boundary.topY);
+            fluidComputeShader.SetFloat(BottomRadiusId, boundary.bottomRadius);
+            fluidComputeShader.SetFloat(TopRadiusId, boundary.topRadius);
+            fluidComputeShader.SetInt(ClampTopId, boundary.clampTop ? 1 : 0);
+            fluidComputeShader.SetFloat(WallDampingId, boundary.wallDamping);
+            fluidComputeShader.SetFloat(WallFrictionId, boundary.wallFriction);
+            fluidComputeShader.SetFloat(ParticleRadiusId, settings.particleRadius);
+            fluidComputeShader.SetFloat(SmoothingRadiusId, settings.smoothingRadius);
+            fluidComputeShader.SetFloat(RestDensityId, settings.restDensity);
+            fluidComputeShader.SetFloat(PressureStiffnessId, settings.pressureStiffness);
+            fluidComputeShader.SetFloat(NearPressureStiffnessId, settings.nearPressureStiffness);
+            fluidComputeShader.SetFloat(ViscosityId, settings.viscosity);
+            fluidComputeShader.SetFloat(SurfaceTensionId, settings.surfaceTension);
+            fluidComputeShader.SetFloat(CohesionId, settings.cohesion);
+            fluidComputeShader.SetFloat(DampingId, settings.damping);
+            fluidComputeShader.SetFloat(SpatialCellSizeId, SpatialCellSize);
+            fluidComputeShader.SetInt(HashTableSizeId, _activeHashTableSize);
+            fluidComputeShader.SetInt(MaxParticlesPerCellId, _activeMaxParticlesPerCell);
 
-            fluidComputeShader.SetBuffer(_applyForcesKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_predictPositionsKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_computeDensityKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_solveConstraintsKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_applyViscosityKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_resolveBoundaryKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_updateParticlesKernel, ParticlesBufferName, _particleBuffer);
+            fluidComputeShader.SetBuffer(_applyForcesKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_predictPositionsKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_computeDensityKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_solveConstraintsKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_applyViscosityKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_resolveBoundaryKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_updateParticlesKernel, ParticlesBufferId, _particleBuffer);
 
             if (SpatialGridBufferValid)
             {
-                fluidComputeShader.SetBuffer(_clearSpatialGridKernel, CellParticleCountsBufferName, _cellParticleCounts);
-                fluidComputeShader.SetBuffer(_clearSpatialGridKernel, SpatialGridCountersBufferName, _spatialGridCounters);
+                fluidComputeShader.SetBuffer(_clearSpatialGridKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_clearSpatialGridKernel, SpatialGridCountersBufferId, _spatialGridCounters);
 
-                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, ParticlesBufferName, _particleBuffer);
-                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, CellParticleCountsBufferName, _cellParticleCounts);
-                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, CellParticleIndicesBufferName, _cellParticleIndices);
-                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, SpatialGridCountersBufferName, _spatialGridCounters);
+                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, ParticlesBufferId, _particleBuffer);
+                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, CellParticleIndicesBufferId, _cellParticleIndices);
+                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, SpatialGridCountersBufferId, _spatialGridCounters);
 
-                fluidComputeShader.SetBuffer(_computeDensityKernel, CellParticleCountsBufferName, _cellParticleCounts);
-                fluidComputeShader.SetBuffer(_computeDensityKernel, CellParticleIndicesBufferName, _cellParticleIndices);
+                fluidComputeShader.SetBuffer(_computeDensityKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_computeDensityKernel, CellParticleIndicesBufferId, _cellParticleIndices);
 
-                fluidComputeShader.SetBuffer(_solveConstraintsKernel, CellParticleCountsBufferName, _cellParticleCounts);
-                fluidComputeShader.SetBuffer(_solveConstraintsKernel, CellParticleIndicesBufferName, _cellParticleIndices);
+                fluidComputeShader.SetBuffer(_solveConstraintsKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_solveConstraintsKernel, CellParticleIndicesBufferId, _cellParticleIndices);
 
-                fluidComputeShader.SetBuffer(_applyViscosityKernel, CellParticleCountsBufferName, _cellParticleCounts);
-                fluidComputeShader.SetBuffer(_applyViscosityKernel, CellParticleIndicesBufferName, _cellParticleIndices);
+                fluidComputeShader.SetBuffer(_applyViscosityKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_applyViscosityKernel, CellParticleIndicesBufferId, _cellParticleIndices);
             }
         }
 

@@ -159,6 +159,11 @@ namespace SwingingPaint.UI
         /// </summary>
         private void ResolveReferences()
         {
+            if (physicsSettings == null && SimulationManager.Instance != null)
+            {
+                physicsSettings = SimulationManager.Instance.physicsSettings;
+            }
+
             if (physicsSettings == null)
             {
                 physicsSettings = Resources.Load<PhysicsSettings>("PhysicsSettings");

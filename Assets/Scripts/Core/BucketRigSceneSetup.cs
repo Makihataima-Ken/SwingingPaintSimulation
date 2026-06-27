@@ -93,6 +93,14 @@ public class BucketRigSceneSetup : MonoBehaviour
         if (bucketRig != null)
         {
             EnsureBucketVisual(bucketRig, bucketVisual);
+            EnsureBucketOrientationController(
+                bucketRig,
+                pivotPoint,
+                ropeAttachment,
+                bucketVisual,
+                paintHole,
+                createMissingMarkers
+            );
         }
     }
 
@@ -214,6 +222,60 @@ public class BucketRigSceneSetup : MonoBehaviour
         }
 
         return attachment;
+    }
+
+    private static BucketOrientationController EnsureBucketOrientationController(
+        Transform bucketRig,
+        Transform pivotPoint,
+        Transform ropeAttachment,
+        Transform bucketVisual,
+        Transform paintHole,
+        bool createMissing
+    )
+    {
+        if (bucketRig == null)
+        {
+            return null;
+        }
+
+        BucketOrientationController orientationController = bucketRig.GetComponent<BucketOrientationController>();
+        if (orientationController == null)
+        {
+            if (!createMissing)
+            {
+                return null;
+            }
+
+            orientationController = bucketRig.gameObject.AddComponent<BucketOrientationController>();
+        }
+
+        if (bucketVisual == null)
+        {
+            bucketVisual = bucketRig.Find("Bucket");
+        }
+
+        if (bucketVisual == null)
+        {
+            bucketVisual = bucketRig.Find("ProceduralBucketFallback");
+        }
+
+        orientationController.pivotPoint = pivotPoint;
+        orientationController.bucketRig = bucketRig;
+        orientationController.ropeAttachment = ropeAttachment;
+        orientationController.bucketVisualRoot = bucketVisual;
+        orientationController.paintHole = paintHole;
+
+        if (orientationController.bucketLocalUpAxis.sqrMagnitude <= 0.000001f)
+        {
+            orientationController.bucketLocalUpAxis = Vector3.up;
+        }
+
+        if (orientationController.bucketLocalForwardAxis.sqrMagnitude <= 0.000001f)
+        {
+            orientationController.bucketLocalForwardAxis = Vector3.forward;
+        }
+
+        return orientationController;
     }
 
     private static void ConfigureMarkerGizmos(

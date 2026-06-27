@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using SwingingPaint.BucketFluid;
 using SwingingPaint.BucketFluid.Core;
 using SwingingPaint.Core;
@@ -19,9 +20,17 @@ namespace SwingingPaint.Paint
         private static readonly int ColorId = Shader.PropertyToID("_Color");
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
 
-        private struct PaintDroplet
+        public enum PaintRenderMode
+        {
+            DropletsOnly,
+            ContinuousStream,
+            Hybrid
+        }
+
+        public struct PaintParticle
         {
             public Vector3 position;
+            public Vector3 previousPosition;
             public Vector3 velocity;
             public float radius;
             public Color color;
@@ -30,6 +39,8 @@ namespace SwingingPaint.Paint
             public float lifetime;
             public float age;
             public bool active;
+            public int streamId;
+            public int orderInStream;
         }
 
         [Header("References")]
@@ -72,6 +83,31 @@ namespace SwingingPaint.Paint
         [Min(0.1f)]
         public float dropletLifetime = 6f;
 
+        [Header("Continuous Stream")]
+        public bool continuousStreamMode = true;
+        public PaintRenderMode renderMode = PaintRenderMode.Hybrid;
+        [Tooltip("World-space distance between emitted stream particles. Values <= 0 use particle radius * 1.5.")]
+        [Min(0f)]
+        public float streamParticleSpacing = 0.012f;
+        [Tooltip("Smallest allowed stream sampling spacing when the outlet moves quickly.")]
+        [Min(0.0001f)]
+        public float minStreamParticleSpacing = 0.008f;
+        [Tooltip("Hard cap on stream particles emitted in one simulation tick.")]
+        [Min(1)]
+        public int maxParticlesPerTick = 96;
+        [Tooltip("Below this flow rate the emitter falls back to droplet behavior.")]
+        [Min(0f)]
+        public float minEmissionRateForStream = 0.001f;
+        [Min(0.01f)]
+        public float streamRadiusMultiplier = 1.7f;
+        [Tooltip("Small velocity jitter for stream particles. Keep low to preserve a connected stream.")]
+        [Range(0f, 0.25f)]
+        public float streamVelocityJitter = 0.001f;
+        [Tooltip("Maximum gap between stream particles before the renderer starts a new visual segment. Values <= 0 use particle radius * 4.")]
+        [Min(0f)]
+        public float streamBreakDistance = 0.09f;
+        public PaintStreamRenderer streamRenderer;
+
         [Header("Manual Falling Motion")]
         [Min(0f)]
         public float gravity = 9.81f;
@@ -79,6 +115,10 @@ namespace SwingingPaint.Paint
         public float airResistance = 0.08f;
         [Min(0f)]
         public float viscosityDampingMultiplier = 0.35f;
+
+        [Header("Runtime Driving")]
+        [Tooltip("Skip this component's FixedUpdate loop when SimulationManager is driving fixed-step simulation.")]
+        public bool useSimulationManagerDriver = true;
 
         [Header("Rendering")]
         public bool drawDroplets = true;
@@ -90,8 +130,56 @@ namespace SwingingPaint.Paint
         public float EmittedPaintQuantity { get; private set; }
         public int ActiveDropletCount { get; private set; }
         public bool CanEmit => emitWhilePlaying && RemainingPaintQuantity > 0f && GetFlowRate() > 0f && holeDiameter > 0f;
+        public float EmissionAccumulator => _emissionAccumulator;
+        public int LastEmittedParticlesPerTick => _lastEmittedParticlesPerTick;
+        public int StreamRenderSegments => streamRenderer != null ? streamRenderer.RenderedSegmentCount : 0;
+        public float AverageStreamSpacing => streamRenderer != null ? streamRenderer.AverageStreamSpacing : 0f;
+        public float MaxStreamSpacing => streamRenderer != null ? streamRenderer.MaxStreamSpacing : 0f;
+        public int BrokenStreamSegmentCount => streamRenderer != null ? streamRenderer.BrokenStreamSegmentCount : 0;
+        public float AverageFallingSpeed => streamRenderer != null ? streamRenderer.AverageFallingSpeed : 0f;
+        public float CurrentAdaptiveBreakDistance => streamRenderer != null ? streamRenderer.CurrentAdaptiveBreakDistance : 0f;
+        public float CurrentFlowRate => GetFlowRate();
+        public Color CurrentPaintColor => GetPaintColor();
+        public Vector3 PreviousOutletPosition => _previousOutletPosition;
+        public Vector3 CurrentOutletPosition => _currentOutletPosition;
+        public Vector3 PreviousOutletVelocity => _previousOutletVelocity;
+        public Vector3 CurrentOutletVelocity => _currentOutletVelocity;
+        public bool ShouldRenderStreamMesh =>
+            continuousStreamMode &&
+            renderMode != PaintRenderMode.DropletsOnly &&
+            CurrentFlowRate >= minEmissionRateForStream;
+        public bool ShouldRenderDropletInstances =>
+            renderMode == PaintRenderMode.DropletsOnly ||
+            renderMode == PaintRenderMode.Hybrid ||
+            !ShouldRenderStreamMesh;
+        public float EffectiveStreamBreakDistance
+        {
+            get
+            {
+                float fallbackRadius = Mathf.Max(minDropletRadius, holeDiameter * 0.5f * 0.65f);
+                return streamBreakDistance > 0f
+                    ? streamBreakDistance
+                    : fallbackRadius * 4f;
+            }
+        }
 
-        private PaintDroplet[] _droplets;
+        public float GetStreamVisualHalfWidth(float particleRadius)
+        {
+            float flowScale = Mathf.Lerp(1f, 1.45f, Mathf.Clamp01(CurrentFlowRate / 5f));
+            return Mathf.Max(0.0001f, particleRadius * streamRadiusMultiplier * flowScale);
+        }
+
+        public float GetDesiredStreamSpacing()
+        {
+            float fallbackRadius = Mathf.Max(minDropletRadius, holeDiameter * 0.5f * 0.65f);
+            float spacing = streamParticleSpacing > 0f
+                ? streamParticleSpacing
+                : fallbackRadius * 1.5f;
+
+            return Mathf.Max(minStreamParticleSpacing, spacing);
+        }
+
+        private PaintParticle[] _droplets;
         private Matrix4x4[] _matrices;
         private MaterialPropertyBlock _propertyBlock;
         private Mesh _runtimeDropletMesh;
@@ -99,6 +187,15 @@ namespace SwingingPaint.Paint
         private float _emissionAccumulator;
         private int _nextDropletIndex;
         private int _spawnSerial;
+        private int _currentStreamId;
+        private int _nextOrderInStream;
+        private int _lastEmittedParticlesPerTick;
+        private bool _wasEmittingLastStep;
+        private bool _hasOutletSample;
+        private Vector3 _previousOutletPosition;
+        private Vector3 _currentOutletPosition;
+        private Vector3 _previousOutletVelocity;
+        private Vector3 _currentOutletVelocity;
         private SimulationManager _subscribedSimulationManager;
 
         private void Awake()
@@ -143,6 +240,13 @@ namespace SwingingPaint.Paint
             ResolveReferences();
             SubscribeToSimulationManager();
 
+            if (useSimulationManagerDriver &&
+                SimulationManager.Instance != null &&
+                SimulationManager.Instance.driveFixedStepSimulation)
+            {
+                return;
+            }
+
             if (SimulationManager.Instance != null && SimulationManager.Instance.IsPaused)
             {
                 return;
@@ -158,7 +262,17 @@ namespace SwingingPaint.Paint
                 return;
             }
 
-            DrawDroplets();
+            EnsureRenderResources();
+
+            if (ShouldRenderStreamMesh && streamRenderer != null)
+            {
+                streamRenderer.RenderStream();
+            }
+
+            if (ShouldRenderDropletInstances)
+            {
+                DrawDroplets();
+            }
         }
 
         [ContextMenu("Reset Paint Emitter")]
@@ -177,6 +291,22 @@ namespace SwingingPaint.Paint
             _emissionAccumulator = 0f;
             _nextDropletIndex = 0;
             _spawnSerial = 0;
+            _currentStreamId = 0;
+            _nextOrderInStream = 0;
+            _lastEmittedParticlesPerTick = 0;
+            _wasEmittingLastStep = false;
+
+            Vector3 outletPosition = GetEmissionPosition();
+            _previousOutletPosition = outletPosition;
+            _currentOutletPosition = outletPosition;
+            _previousOutletVelocity = Vector3.zero;
+            _currentOutletVelocity = Vector3.zero;
+            _hasOutletSample = true;
+
+            if (streamRenderer != null)
+            {
+                streamRenderer.ClearStream();
+            }
         }
 
         public void Step(float deltaTime)
@@ -187,10 +317,16 @@ namespace SwingingPaint.Paint
             }
 
             EnsureStorage();
+            SampleOutletMotion(deltaTime);
+            _lastEmittedParticlesPerTick = 0;
 
             if (CanEmit && ActiveDropletCount < maxDroplets)
             {
                 EmitPaint(deltaTime);
+            }
+            else
+            {
+                _wasEmittingLastStep = false;
             }
 
             UpdateDroplets(deltaTime);
@@ -214,23 +350,71 @@ namespace SwingingPaint.Paint
 
             _emissionAccumulator += emittedAmount;
 
-            float safeDropletAmount = Mathf.Max(0.0001f, dropletAmount);
-            int spawnCount = Mathf.FloorToInt(_emissionAccumulator / safeDropletAmount);
+            bool streamEmission = ShouldUseContinuousEmission();
+            float targetParticleAmount = streamEmission ? GetStreamParticleAmount() : Mathf.Max(0.0001f, dropletAmount);
+            int requiredFromFlow = Mathf.FloorToInt(_emissionAccumulator / targetParticleAmount);
+            int requiredFromMovement = 0;
+
+            if (streamEmission)
+            {
+                float pathDistance = Vector3.Distance(_previousOutletPosition, _currentOutletPosition);
+                requiredFromMovement = Mathf.CeilToInt(pathDistance / GetDesiredStreamSpacing());
+            }
+
+            int requestedSpawnCount = streamEmission
+                ? Mathf.Max(requiredFromFlow, requiredFromMovement)
+                : requiredFromFlow;
+
+            if (requestedSpawnCount <= 0)
+            {
+                return;
+            }
+
+            int tickLimit = streamEmission ? Mathf.Max(1, maxParticlesPerTick) : 128;
+            int spawnCount = Mathf.Min(requestedSpawnCount, maxDroplets - ActiveDropletCount, tickLimit);
 
             if (spawnCount <= 0)
             {
                 return;
             }
 
-            spawnCount = Mathf.Min(spawnCount, maxDroplets - ActiveDropletCount);
-            const int maxSpawnPerStep = 128;
-            spawnCount = Mathf.Min(spawnCount, maxSpawnPerStep);
+            float minimumParticleAmount = streamEmission
+                ? targetParticleAmount * 0.25f
+                : targetParticleAmount;
+
+            if (_emissionAccumulator < minimumParticleAmount)
+            {
+                return;
+            }
+
+            float availableForThisTick = Mathf.Min(_emissionAccumulator, targetParticleAmount * spawnCount);
+            float amountPerParticle = availableForThisTick / spawnCount;
+
+            if (!_wasEmittingLastStep)
+            {
+                _currentStreamId++;
+                _nextOrderInStream = 0;
+            }
 
             for (int i = 0; i < spawnCount; i++)
             {
-                SpawnDroplet(safeDropletAmount);
-                _emissionAccumulator -= safeDropletAmount;
+                float pathT = streamEmission
+                    ? GetSpawnPathT(i, spawnCount)
+                    : 1f;
+                Vector3 spawnPosition = streamEmission
+                    ? Vector3.Lerp(_previousOutletPosition, _currentOutletPosition, pathT)
+                    : _currentOutletPosition;
+                Vector3 outletVelocity = streamEmission
+                    ? Vector3.Lerp(_previousOutletVelocity, _currentOutletVelocity, pathT)
+                    : GetBucketWorldVelocity();
+
+                SpawnDroplet(amountPerParticle, spawnPosition, outletVelocity, streamEmission);
             }
+
+            _emissionAccumulator = Mathf.Max(0f, _emissionAccumulator - amountPerParticle * spawnCount);
+
+            _lastEmittedParticlesPerTick = spawnCount;
+            _wasEmittingLastStep = true;
         }
 
         private float CalculateEmissionAmount(float deltaTime)
@@ -258,7 +442,7 @@ namespace SwingingPaint.Paint
             );
         }
 
-        private void SpawnDroplet(float amount)
+        private void SpawnDroplet(float amount, Vector3 spawnPosition, Vector3 outletVelocity, bool streamEmission)
         {
             int index = FindDropletSlot();
             if (index < 0)
@@ -272,17 +456,24 @@ namespace SwingingPaint.Paint
             float exitSpeed = Mathf.Sqrt(2f * Mathf.Max(0f, GetGravity()) * head) * viscosityFactor * exitSpeedMultiplier;
             exitSpeed += GetFlowRate() * 0.035f;
 
-            PaintDroplet droplet = new PaintDroplet
+            float jitterAmplitude = streamEmission
+                ? streamVelocityJitter * viscosityFactor
+                : emissionJitter;
+
+            PaintParticle droplet = new PaintParticle
             {
-                position = GetEmissionPosition(),
-                velocity = GetBucketWorldVelocity() + emissionDirection * exitSpeed + GetDeterministicJitter(_spawnSerial, emissionJitter),
+                position = spawnPosition,
+                previousPosition = spawnPosition,
+                velocity = outletVelocity + emissionDirection * exitSpeed + GetDeterministicJitter(_spawnSerial, jitterAmplitude),
                 radius = CalculateDropletRadius(amount),
                 color = GetPaintColor(),
                 wetness = 1f,
                 amount = amount,
                 lifetime = dropletLifetime,
                 age = 0f,
-                active = true
+                active = true,
+                streamId = streamEmission ? _currentStreamId : -1,
+                orderInStream = streamEmission ? _nextOrderInStream++ : _spawnSerial
             };
 
             _droplets[index] = droplet;
@@ -298,7 +489,7 @@ namespace SwingingPaint.Paint
 
             for (int i = 0; i < _droplets.Length; i++)
             {
-                PaintDroplet droplet = _droplets[i];
+                PaintParticle droplet = _droplets[i];
                 if (!droplet.active)
                 {
                     continue;
@@ -315,14 +506,14 @@ namespace SwingingPaint.Paint
                 droplet.velocity += gravityAcceleration * deltaTime;
                 droplet.velocity *= Mathf.Max(0f, 1f - airResistance * deltaTime);
                 droplet.velocity *= Mathf.Max(0f, 1f - viscosityDamping * deltaTime);
-                Vector3 previousPosition = droplet.position;
+                droplet.previousPosition = droplet.position;
                 droplet.position += droplet.velocity * deltaTime;
                 droplet.wetness = Mathf.Clamp01(1f - droplet.age / droplet.lifetime);
 
                 if (depositOnPaintSurface &&
                     paintSurface != null &&
                     paintSurface.TryDepositSegment(
-                        previousPosition,
+                        droplet.previousPosition,
                         droplet.position,
                         droplet.radius,
                         droplet.color,
@@ -377,7 +568,7 @@ namespace SwingingPaint.Paint
 
             for (int i = 0; i < _droplets.Length; i++)
             {
-                PaintDroplet droplet = _droplets[i];
+                PaintParticle droplet = _droplets[i];
                 if (!droplet.active)
                 {
                     continue;
@@ -399,6 +590,32 @@ namespace SwingingPaint.Paint
             {
                 DrawBatch(batchCount, batchColor);
             }
+        }
+
+        public int CopyActiveStreamParticles(List<PaintParticle> particles)
+        {
+            if (particles == null)
+            {
+                return 0;
+            }
+
+            particles.Clear();
+
+            if (_droplets == null)
+            {
+                return 0;
+            }
+
+            for (int i = 0; i < _droplets.Length; i++)
+            {
+                PaintParticle particle = _droplets[i];
+                if (particle.active && particle.streamId >= 0 && particle.wetness > 0f)
+                {
+                    particles.Add(particle);
+                }
+            }
+
+            return particles.Count;
         }
 
         private void DrawBatch(int count, Color color)
@@ -466,6 +683,11 @@ namespace SwingingPaint.Paint
             {
                 physicsSettings = Resources.Load<PhysicsSettings>("PhysicsSettings");
             }
+
+            if (streamRenderer == null)
+            {
+                streamRenderer = GetComponent<PaintStreamRenderer>();
+            }
         }
 
         private void SubscribeToSimulationManager()
@@ -497,7 +719,7 @@ namespace SwingingPaint.Paint
             int safeMaxDroplets = Mathf.Max(1, maxDroplets);
             if (_droplets == null || _droplets.Length != safeMaxDroplets)
             {
-                _droplets = new PaintDroplet[safeMaxDroplets];
+                _droplets = new PaintParticle[safeMaxDroplets];
                 ActiveDropletCount = 0;
                 _nextDropletIndex = 0;
             }
@@ -537,6 +759,21 @@ namespace SwingingPaint.Paint
 
                 dropletMaterial = _runtimeDropletMaterial;
             }
+
+            if (streamRenderer == null)
+            {
+                streamRenderer = GetComponent<PaintStreamRenderer>();
+            }
+
+            if (streamRenderer == null)
+            {
+                streamRenderer = gameObject.AddComponent<PaintStreamRenderer>();
+            }
+
+            if (streamRenderer != null)
+            {
+                streamRenderer.emitter = this;
+            }
         }
 
         private void DestroyRuntimeResources()
@@ -552,6 +789,67 @@ namespace SwingingPaint.Paint
                 Destroy(_runtimeDropletMaterial);
                 _runtimeDropletMaterial = null;
             }
+
+            if (streamRenderer != null)
+            {
+                streamRenderer.ClearStream();
+            }
+        }
+
+        private void SampleOutletMotion(float deltaTime)
+        {
+            Vector3 outletPosition = GetEmissionPosition();
+
+            if (!_hasOutletSample)
+            {
+                _previousOutletPosition = outletPosition;
+                _currentOutletPosition = outletPosition;
+                _previousOutletVelocity = GetBucketWorldVelocity();
+                _currentOutletVelocity = _previousOutletVelocity;
+                _hasOutletSample = true;
+                return;
+            }
+
+            _previousOutletPosition = _currentOutletPosition;
+            _previousOutletVelocity = _currentOutletVelocity;
+            _currentOutletPosition = outletPosition;
+
+            Vector3 sampledVelocity = deltaTime > Mathf.Epsilon
+                ? (_currentOutletPosition - _previousOutletPosition) / deltaTime
+                : Vector3.zero;
+
+            _currentOutletVelocity = sampledVelocity.sqrMagnitude > 0.000001f
+                ? sampledVelocity
+                : GetBucketWorldVelocity();
+        }
+
+        private bool ShouldUseContinuousEmission()
+        {
+            return continuousStreamMode && GetFlowRate() >= minEmissionRateForStream;
+        }
+
+        private float GetStreamParticleAmount()
+        {
+            float baseAmount = Mathf.Max(0.0001f, dropletAmount);
+            float referenceRadius = Mathf.Max(minDropletRadius, holeDiameter * 0.5f * 0.65f);
+            float spacing = GetStreamParticleSpacing(referenceRadius);
+            float referenceSpacing = Mathf.Max(0.0001f, referenceRadius * 6f);
+            float spacingScale = Mathf.Clamp(spacing / referenceSpacing, 0.18f, 1f);
+            return Mathf.Max(0.0001f, baseAmount * spacingScale);
+        }
+
+        private float GetStreamParticleSpacing(float particleRadius)
+        {
+            float spacing = streamParticleSpacing > 0f
+                ? streamParticleSpacing
+                : Mathf.Max(0.0001f, particleRadius * 1.5f);
+
+            return Mathf.Max(minStreamParticleSpacing, spacing);
+        }
+
+        private static float GetSpawnPathT(int index, int count)
+        {
+            return Mathf.Clamp01((index + 0.5f) / Mathf.Max(1, count));
         }
 
         private Vector3 GetEmissionPosition()
@@ -706,6 +1004,13 @@ namespace SwingingPaint.Paint
             exitSpeedMultiplier = Mathf.Max(0f, exitSpeedMultiplier);
             maxDroplets = Mathf.Max(1, maxDroplets);
             dropletLifetime = Mathf.Max(0.1f, dropletLifetime);
+            streamParticleSpacing = Mathf.Max(0f, streamParticleSpacing);
+            minStreamParticleSpacing = Mathf.Max(0.0001f, minStreamParticleSpacing);
+            maxParticlesPerTick = Mathf.Max(1, maxParticlesPerTick);
+            minEmissionRateForStream = Mathf.Max(0f, minEmissionRateForStream);
+            streamRadiusMultiplier = Mathf.Max(0.01f, streamRadiusMultiplier);
+            streamVelocityJitter = Mathf.Clamp(streamVelocityJitter, 0f, 0.25f);
+            streamBreakDistance = Mathf.Max(0f, streamBreakDistance);
             gravity = Mathf.Max(0f, gravity);
             airResistance = Mathf.Max(0f, airResistance);
             viscosityDampingMultiplier = Mathf.Max(0f, viscosityDampingMultiplier);

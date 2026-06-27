@@ -1,4 +1,5 @@
 using SwingingPaint.BucketFluid.Core;
+using SwingingPaint.Paint;
 using UnityEngine;
 
 namespace SwingingPaint.BucketFluid.Rendering
@@ -15,10 +16,11 @@ namespace SwingingPaint.BucketFluid.Rendering
         public GPUFluidSimulator simulator;
         public BucketMotionProvider motionProvider;
         public GPUFluidRenderer fluidRenderer;
+        public PaintEmitter paintEmitter;
 
         [Header("Display")]
         public bool showPanel = true;
-        public Rect panelRect = new Rect(12f, 12f, 380f, 610f);
+        public Rect panelRect = new Rect(12f, 12f, 380f, 700f);
 
         private void Awake()
         {
@@ -82,6 +84,19 @@ namespace SwingingPaint.BucketFluid.Rendering
             GUILayout.Label($"Effective Accel: {FormatVector(motionProvider != null ? motionProvider.EffectiveLocalAcceleration : Vector3.zero)}");
             GUILayout.Label("Boundary Source: BucketFluidBoundary");
             GUILayout.Label($"Boundary Collision: {simulator != null && simulator.BoundaryCollisionEnabled}");
+            GUILayout.Label($"Paint Stream Enabled: {paintEmitter != null && paintEmitter.continuousStreamMode}");
+            GUILayout.Label($"Paint Render Mode: {(paintEmitter != null ? paintEmitter.renderMode.ToString() : "n/a")}");
+            GUILayout.Label($"Paint Emission Accumulator: {(paintEmitter != null ? paintEmitter.EmissionAccumulator : 0f):F4}");
+            GUILayout.Label($"Paint Emitted/Tick: {(paintEmitter != null ? paintEmitter.LastEmittedParticlesPerTick : 0)}");
+            GUILayout.Label($"Active Falling Paint: {(paintEmitter != null ? paintEmitter.ActiveDropletCount : 0)}");
+            GUILayout.Label($"Stream Segments: {(paintEmitter != null ? paintEmitter.StreamRenderSegments : 0)}");
+            GUILayout.Label($"Avg Stream Spacing: {(paintEmitter != null ? paintEmitter.AverageStreamSpacing : 0f):F4}");
+            GUILayout.Label($"Max Stream Spacing: {(paintEmitter != null ? paintEmitter.MaxStreamSpacing : 0f):F4}");
+            GUILayout.Label($"Broken Stream Segments: {(paintEmitter != null ? paintEmitter.BrokenStreamSegmentCount : 0)}");
+            GUILayout.Label($"Avg Falling Speed: {(paintEmitter != null ? paintEmitter.AverageFallingSpeed : 0f):F3}");
+            GUILayout.Label($"Adaptive Break Distance: {(paintEmitter != null ? paintEmitter.CurrentAdaptiveBreakDistance : 0f):F4}");
+            GUILayout.Label($"Current Flow Rate: {(paintEmitter != null ? paintEmitter.CurrentFlowRate : 0f):F3}");
+            GUILayout.Label($"Remaining Paint: {(paintEmitter != null ? paintEmitter.RemainingPaintQuantity : 0f):F3}");
 
             if (simulator != null && simulator.boundary != null)
             {
@@ -154,6 +169,16 @@ namespace SwingingPaint.BucketFluid.Rendering
             if (fluidRenderer == null)
             {
                 fluidRenderer = GetComponentInParent<GPUFluidRenderer>();
+            }
+
+            if (paintEmitter == null)
+            {
+                paintEmitter = GetComponentInChildren<PaintEmitter>();
+            }
+
+            if (paintEmitter == null)
+            {
+                paintEmitter = GetComponentInParent<PaintEmitter>();
             }
         }
 

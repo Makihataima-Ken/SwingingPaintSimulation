@@ -69,7 +69,11 @@ namespace SwingingPaint.BucketFluid.Rendering
 
         private void LateUpdate()
         {
-            ResolveReferences();
+            if (simulator == null)
+            {
+                ResolveReferences();
+            }
+
             EnsureRuntimeFallbacks();
 
             if (!renderEnabled)
@@ -206,7 +210,11 @@ namespace SwingingPaint.BucketFluid.Rendering
 
         private void LogPlayDiagnosticsOnce()
         {
-            if (!Application.isPlaying || _hasLoggedPlayDiagnostics)
+            if (!Application.isPlaying ||
+                _hasLoggedPlayDiagnostics ||
+                simulator == null ||
+                simulator.settings == null ||
+                !simulator.settings.enableDebug)
             {
                 return;
             }

@@ -184,7 +184,7 @@ namespace SwingingPaint.BucketFluid
 
         // Enables additional debug readouts and validation aids. Disable for presentation.
         [Tooltip("Enable debug information for fluid development.")]
-        public bool enableDebug = true;
+        public bool enableDebug = false;
 
         [HideInInspector]
         public bool drawBoundaryGizmos = true;

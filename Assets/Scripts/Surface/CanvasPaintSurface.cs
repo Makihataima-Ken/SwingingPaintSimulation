@@ -51,8 +51,10 @@ namespace SwingingPaint.Surface
 
         private Texture2D _paintTexture2D;
         private Color[] _pixels;
+        private bool[] _coveredPixels;
         private Material _runtimeMaterial;
         private bool _textureDirty;
+        private int _coveredPixelCount;
 
         private void Awake()
         {
@@ -68,6 +70,11 @@ namespace SwingingPaint.Surface
             ApplyTextureToRenderer();
         }
 
+        private void LateUpdate()
+        {
+            FlushPaintTexture();
+        }
+
         private void OnDestroy()
         {
             ReleaseRuntimeResources();
@@ -81,6 +88,7 @@ namespace SwingingPaint.Surface
             for (int i = 0; i < _pixels.Length; i++)
             {
                 _pixels[i] = drySurfaceColor;
+                _coveredPixels[i] = false;
             }
 
             _paintTexture2D.SetPixels(_pixels);
@@ -89,6 +97,7 @@ namespace SwingingPaint.Surface
 
             DepositedImpactCount = 0;
             TotalPaintDeposited = 0f;
+            _coveredPixelCount = 0;
             CoverageArea = 0f;
             _textureDirty = false;
         }
@@ -189,17 +198,22 @@ namespace SwingingPaint.Surface
                     existing.b = Mathf.Lerp(existing.b, paintColor.b, alpha);
                     existing.a = Mathf.Clamp01(existing.a + alpha * 0.75f);
                     _pixels[index] = existing;
+
+                    if (!_coveredPixels[index] && IsCovered(existing))
+                    {
+                        _coveredPixels[index] = true;
+                        _coveredPixelCount++;
+                    }
                 }
             }
 
             DepositedImpactCount++;
             TotalPaintDeposited += Mathf.Max(0f, amount);
             _textureDirty = true;
-            UploadTexture();
-            RecalculateCoverage();
+            UpdateCoverageArea();
         }
 
-        private void UploadTexture()
+        public void FlushPaintTexture()
         {
             if (!_textureDirty)
             {
@@ -259,26 +273,20 @@ namespace SwingingPaint.Surface
             return physicsSettings != null ? physicsSettings.SurfaceAbsorption : defaultAbsorption;
         }
 
-        private void RecalculateCoverage()
+        private void UpdateCoverageArea()
         {
-            int coveredPixels = 0;
-
-            for (int i = 0; i < _pixels.Length; i++)
-            {
-                Color pixel = _pixels[i];
-                float colorDelta =
-                    Mathf.Abs(pixel.r - drySurfaceColor.r) +
-                    Mathf.Abs(pixel.g - drySurfaceColor.g) +
-                    Mathf.Abs(pixel.b - drySurfaceColor.b);
-
-                if (colorDelta > 0.03f)
-                {
-                    coveredPixels++;
-                }
-            }
-
             Vector2 canvasSize = GetCanvasSize();
-            CoverageArea = coveredPixels / (float)_pixels.Length * canvasSize.x * canvasSize.y;
+            CoverageArea = _coveredPixelCount / (float)_pixels.Length * canvasSize.x * canvasSize.y;
+        }
+
+        private bool IsCovered(Color pixel)
+        {
+            float colorDelta =
+                Mathf.Abs(pixel.r - drySurfaceColor.r) +
+                Mathf.Abs(pixel.g - drySurfaceColor.g) +
+                Mathf.Abs(pixel.b - drySurfaceColor.b);
+
+            return colorDelta > 0.03f;
         }
 
         private void ResolveReferences()
@@ -325,6 +333,7 @@ namespace SwingingPaint.Surface
                 name = "Runtime Canvas Paint Backing"
             };
             _pixels = new Color[textureWidth * textureHeight];
+            _coveredPixels = new bool[textureWidth * textureHeight];
 
             PaintTexture = new RenderTexture(textureWidth, textureHeight, 0, RenderTextureFormat.ARGB32)
             {
@@ -386,6 +395,8 @@ namespace SwingingPaint.Surface
             }
 
             _pixels = null;
+            _coveredPixels = null;
+            _coveredPixelCount = 0;
         }
 
         private void OnValidate()
