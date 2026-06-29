@@ -360,14 +360,31 @@ MonoBehaviour:
   anchorTransform: {fileID: 41000002}
   bucketTransform: {fileID: 45000002}
   simulationSettings: {fileID: 0}
-  ropeLength: 1.98
-  initialAngleDegrees: 0
-  initialAngularVelocity: 0
-  directionAngleDegrees: 0
+  initialAngleDegrees: 38.4
+  initialAngularVelocity: 15.93
+  initialLateralAngularVelocityDegrees: 26.8
+  directionAngleDegrees: 13.11
   damping: 0.05
   gravity: 9.81
+  motionMode: 0
+  swingDirectionDegrees: 0
+  maxWorldSpeed: 8
+  bucketMass: 1.2
+  paintMass: 1
+  airResistance: 0.02
+  swingCountLimit: 0
+  restLength: 1.98
+  ropeStiffness: 50
+  ropeDamping: 0.5
+  ropeElasticity: 0.5
+  maxSubStep: 0.005
+  maxFrameTime: 0.1
+  maxStretchMultiplier: 4
+  maxRadialSpeed: 50
+  maxAngularSpeed: 50
   drawDebugGizmos: 1
   debugDirectionLength: 1
+  useSimulationManagerDriver: 1
 --- !u!114 &40000004
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -381,6 +398,8 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier:
   autoAssignOnValidate: 1
+  alignMarkersToBoundary: 1
+  paintHoleOffsetBelowBottom: 0.025
 --- !u!1 &41000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -521,6 +540,9 @@ MonoBehaviour:
   maxImpactRadius: 0.45
   opacityMultiplier: 0.85
   flowSpreadBoost: 0.15
+  surfaceContactMode: 1
+  contactOffsetMultiplier: 1
+  gpuCanvasMode: 1
 --- !u!1 &44000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -624,6 +646,11 @@ MonoBehaviour:
   pendulum: {fileID: 40000003}
   ropeWidth: 0.04
   ropeMaterial: {fileID: 0}
+  reflectStretch: 1
+  slackColor: {r: 1, g: 1, b: 1, a: 1}
+  stretchedColor: {r: 1, g: 0.4, b: 0.2, a: 1}
+  fullStretchRatio: 0.5
+  stretchedWidthScale: 0.6
 --- !u!120 &44000007
 LineRenderer:
   serializedVersion: 2
@@ -668,7 +695,7 @@ LineRenderer:
   m_SortingOrder: 0
   m_Positions:
   - {x: 0, y: 5, z: 0}
-  - {x: 0, y: 3.2, z: 0}
+  - {x: 0, y: 3.0800002, z: 0}
   m_Parameters:
     serializedVersion: 3
     widthMultiplier: 1
@@ -788,8 +815,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 4710fd02a4e340718b780c7f01185374, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   developmentParticleCount: 2000
   presentationParticleCount: 20000
   presentationMode: 0
@@ -836,8 +863,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 28968317f61e4708af375839b342de7d, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   bucketTransform: {fileID: 45000002}
   settings: {fileID: 45000003}
   gravity: 9.81
@@ -847,6 +874,7 @@ MonoBehaviour:
   accelerationGizmoScale: 0.04
   velocityGizmoColor: {r: 0, g: 1, b: 1, a: 1}
   accelerationGizmoColor: {r: 1, g: 0.35, b: 0.05, a: 1}
+  useSimulationManagerDriver: 1
 --- !u!114 &45000005
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -857,8 +885,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5bf4f07f457a40f7b0f1d0bedce79e25, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   bucketVisualModel: {fileID: 87824954}
   boundaryLocalCenterOffset: {x: 0, y: 0, z: 0}
   bottomY: -0.33
@@ -881,8 +909,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d4637777ddaf4d259ebe39712f7e25ef, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   settings: {fileID: 45000003}
   fluidComputeShader: {fileID: 7200000, guid: bced192c20be48e88ac05553fe160ba9, type: 3}
   motionProvider: {fileID: 45000004}
@@ -891,10 +919,12 @@ MonoBehaviour:
   pauseSimulation: 0
   pauseAfterReset: 0
   stepSimulationOnce: 0
+  useSimulationManagerDriver: 1
   spatialGridEnabled: 1
   hashTableSize: 4096
   maxParticlesPerCell: 64
   spatialGridDebugReadbackInterval: 0.25
+  particleValidationReadbackInterval: 0.25
 --- !u!114 &45000007
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -905,11 +935,12 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 76cbdf7d3e544d8b98fa57e4f7560986, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   simulator: {fileID: 45000006}
   motionProvider: {fileID: 45000004}
   fluidRenderer: {fileID: 47000003}
+  paintEmitter: {fileID: 0}
   showPanel: 0
   panelRect:
     serializedVersion: 2
@@ -953,6 +984,7 @@ GameObject:
   m_Component:
   - component: {fileID: 46000002}
   - component: {fileID: 46000003}
+  - component: {fileID: 46000004}
   m_Layer: 0
   m_Name: PaintHole
   m_TagString: Untagged
@@ -969,7 +1001,7 @@ Transform:
   m_GameObject: {fileID: 46000001}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: -0.82, z: 0}
+  m_LocalPosition: {x: 0, y: -0.35500002, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1009,64 +1041,55 @@ MonoBehaviour:
   emissionJitter: 0.02
   maxDroplets: 2048
   dropletLifetime: 6
+  continuousStreamMode: 1
+  renderMode: 2
+  streamParticleSpacing: 0.012
+  minStreamParticleSpacing: 0.008
+  maxParticlesPerTick: 96
+  minEmissionRateForStream: 0.001
+  streamRadiusMultiplier: 1.7
+  streamVelocityJitter: 0.001
+  streamBreakDistance: 0.09
+  streamRenderer: {fileID: 0}
+  fallingStreamPhysicsMode: 1
+  fallingSubsteps: 2
+  streamSmoothingRadius: 0.075
+  streamPressureStiffness: 45
+  streamNearPressureStiffness: 90
+  streamCohesion: 0.35
+  streamSurfaceTension: 0.2
+  maxFallingSpeed: 12
+  flushCanvasAfterPaintStep: 1
+  useVisualStreamContactRadius: 1
+  streamContactRadiusMultiplier: 1.1
+  contactPredictionFractionOfSubstep: 0.5
+  maxContactPredictionDistance: 0.035
   gravity: 9.81
   airResistance: 0.08
   viscosityDampingMultiplier: 0.35
+  useSimulationManagerDriver: 1
   drawDroplets: 1
   dropletMesh: {fileID: 0}
   dropletMaterial: {fileID: 0}
   depositOnPaintSurface: 1
---- !u!1 &49000001
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 49000002}
-  - component: {fileID: 49000003}
-  m_Layer: 0
-  m_Name: RopeAttachment
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &49000002
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 49000001}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: -0.12, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 45000002}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &49000003
+--- !u!114 &46000004
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 49000001}
+  m_GameObject: {fileID: 46000001}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e7a6290b9ed04b1e9b37c50b59b2104d, type: 3}
+  m_Script: {fileID: 11500000, guid: 59a8853f384f4cfa8a3163cf3a63e3a5, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  anchorTransform: {fileID: 41000002}
   bucketBoundary: {fileID: 45000005}
   drawGizmo: 1
-  radius: 0.06
-  directionLength: 0.25
-  drawLineToAnchor: 1
-  gizmoColor: {r: 1, g: 0.85, b: 0.1, a: 1}
+  radius: 0.08
+  directionLength: 0.35
+  drawBoundaryReference: 1
+  gizmoColor: {r: 1, g: 0.25, b: 0.05, a: 1}
 --- !u!1 &47000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -1109,8 +1132,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c04f58966f1642b0b9369380f65fea41, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   simulator: {fileID: 45000006}
   particleMesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
   particleMaterial: {fileID: 2100000, guid: bf5b2d6f195e45e4a2f8a59f07377652, type: 2}
@@ -1176,6 +1199,57 @@ MonoBehaviour:
   fixedTimestep: 0.016666668
   maxStepsPerRenderedFrame: 4
   maxAccumulatedTime: 0.12
+--- !u!1 &49000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 49000002}
+  - component: {fileID: 49000003}
+  m_Layer: 0
+  m_Name: RopeAttachment
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &49000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 49000001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -0.12, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 45000002}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &49000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 49000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e7a6290b9ed04b1e9b37c50b59b2104d, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  anchorTransform: {fileID: 41000002}
+  bucketBoundary: {fileID: 45000005}
+  drawGizmo: 1
+  radius: 0.06
+  directionLength: 0.25
+  drawLineToAnchor: 1
+  gizmoColor: {r: 1, g: 0.85, b: 0.1, a: 1}
 --- !u!4 &87824954 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 114cf661adfa3ae43aa88405e356a70b, type: 3}
@@ -1261,3 +1335,4 @@ SceneRoots:
   - {fileID: 10000004}
   - {fileID: 30000003}
   - {fileID: 40000002}
+  - {fileID: 48000002}

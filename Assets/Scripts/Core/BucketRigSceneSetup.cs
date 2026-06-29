@@ -347,6 +347,32 @@ public class BucketRigSceneSetup : MonoBehaviour
         paintEmitter.boundary = boundary;
         paintEmitter.fluidSettings = bucketRig != null ? bucketRig.GetComponent<BucketFluidSettings>() : null;
         paintEmitter.motionProvider = bucketRig != null ? bucketRig.GetComponent<BucketMotionProvider>() : null;
+
+        GPUFluidOutflowController outflowController = paintHole.GetComponent<GPUFluidOutflowController>();
+        if (outflowController == null && createMissing)
+        {
+            outflowController = paintHole.gameObject.AddComponent<GPUFluidOutflowController>();
+        }
+
+        if (outflowController != null)
+        {
+            outflowController.paintHoleTransform = paintHole;
+            outflowController.simulator = bucketRig != null ? bucketRig.GetComponent<GPUFluidSimulator>() : null;
+            outflowController.settings = bucketRig != null ? bucketRig.GetComponent<BucketFluidSettings>() : null;
+            outflowController.motionProvider = bucketRig != null ? bucketRig.GetComponent<BucketMotionProvider>() : null;
+            outflowController.boundary = boundary;
+        }
+
+        GPUOutflowRenderer outflowRenderer = paintHole.GetComponent<GPUOutflowRenderer>();
+        if (outflowRenderer == null && createMissing)
+        {
+            outflowRenderer = paintHole.gameObject.AddComponent<GPUOutflowRenderer>();
+        }
+
+        if (outflowRenderer != null)
+        {
+            outflowRenderer.outflowController = outflowController;
+        }
     }
 
     private void OnValidate()

@@ -16,6 +16,7 @@ MonoBehaviour:
   damping: 0.05
   initialAngle: 0
   angularVelocity: 0
+  initialLateralAngularVelocity: 25
   direction: 0
   bucketMass: 1.2
   paintMass: 1
@@ -27,5 +28,6 @@ MonoBehaviour:
   paintFlowRate: 1
   paintViscosity: 0.5
   paintQuantity: 100
+  paintHoleDiameter: 0.035
   surfaceAbsorption: 0.1
   paintSpreadRadius: 0.2

@@ -43,6 +43,7 @@ namespace SwingingPaint.Paint
         private readonly List<Vector3> _vertices = new List<Vector3>();
         private readonly List<int> _triangles = new List<int>();
         private readonly List<Color> _colors = new List<Color>();
+        private readonly List<PaintEmitter.PaintParticle> _segmentParticles = new List<PaintEmitter.PaintParticle>();
         private Mesh _streamMesh;
         private Material _runtimeMaterial;
         private MaterialPropertyBlock _propertyBlock;
@@ -169,6 +170,7 @@ namespace SwingingPaint.Paint
             _vertices.Clear();
             _triangles.Clear();
             _colors.Clear();
+            _segmentParticles.Clear();
             RenderedSegmentCount = 0;
             ResetMetrics();
 
@@ -177,13 +179,22 @@ namespace SwingingPaint.Paint
             float speedSum = 0f;
             int measuredPairCount = 0;
 
-            for (int i = 1; i < _particles.Count; i++)
+            for (int i = 0; i < _particles.Count; i++)
             {
-                PaintEmitter.PaintParticle previous = _particles[i - 1];
                 PaintEmitter.PaintParticle current = _particles[i];
+
+                if (_segmentParticles.Count == 0)
+                {
+                    _segmentParticles.Add(current);
+                    continue;
+                }
+
+                PaintEmitter.PaintParticle previous = _segmentParticles[_segmentParticles.Count - 1];
 
                 if (previous.streamId != current.streamId)
                 {
+                    FlushSegmentToRibbon();
+                    _segmentParticles.Add(current);
                     continue;
                 }
 
@@ -205,11 +216,15 @@ namespace SwingingPaint.Paint
                 if (distance > adaptiveBreakDistance)
                 {
                     BrokenStreamSegmentCount++;
+                    FlushSegmentToRibbon();
+                    _segmentParticles.Add(current);
                     continue;
                 }
 
-                AddRibbonSegment(previous, current);
+                _segmentParticles.Add(current);
             }
+
+            FlushSegmentToRibbon();
 
             if (measuredPairCount > 0)
             {
@@ -230,38 +245,86 @@ namespace SwingingPaint.Paint
             _streamMesh.RecalculateBounds();
         }
 
-        private void AddRibbonSegment(PaintEmitter.PaintParticle from, PaintEmitter.PaintParticle to)
+        private void FlushSegmentToRibbon()
         {
-            Vector3 direction = to.position - from.position;
-            if (direction.sqrMagnitude <= 0.0000001f)
+            if (_segmentParticles.Count < 2)
             {
+                _segmentParticles.Clear();
                 return;
             }
 
-            direction.Normalize();
-            Vector3 side = GetRibbonSide(direction, (from.position + to.position) * 0.5f);
-            float fromHalfWidth = emitter.GetStreamVisualHalfWidth(from.radius);
-            float toHalfWidth = emitter.GetStreamVisualHalfWidth(to.radius);
-            int start = _vertices.Count;
+            int firstVertex = _vertices.Count;
 
-            _vertices.Add(from.position - side * fromHalfWidth);
-            _vertices.Add(from.position + side * fromHalfWidth);
-            _vertices.Add(to.position - side * toHalfWidth);
-            _vertices.Add(to.position + side * toHalfWidth);
+            for (int i = 0; i < _segmentParticles.Count; i++)
+            {
+                PaintEmitter.PaintParticle particle = _segmentParticles[i];
+                Vector3 center = GetSmoothedSegmentPoint(i);
+                Vector3 tangent = GetSegmentTangent(i);
+                Vector3 side = GetRibbonSide(tangent, center);
+                float halfWidth = emitter.GetStreamVisualHalfWidth(particle.radius);
 
-            _triangles.Add(start);
-            _triangles.Add(start + 2);
-            _triangles.Add(start + 1);
-            _triangles.Add(start + 1);
-            _triangles.Add(start + 2);
-            _triangles.Add(start + 3);
+                _vertices.Add(center - side * halfWidth);
+                _vertices.Add(center + side * halfWidth);
+                _colors.Add(particle.color);
+                _colors.Add(particle.color);
 
-            _colors.Add(from.color);
-            _colors.Add(from.color);
-            _colors.Add(to.color);
-            _colors.Add(to.color);
+                if (i <= 0)
+                {
+                    continue;
+                }
 
-            RenderedSegmentCount++;
+                int previousLeft = firstVertex + (i - 1) * 2;
+                int currentLeft = firstVertex + i * 2;
+
+                _triangles.Add(previousLeft);
+                _triangles.Add(currentLeft);
+                _triangles.Add(previousLeft + 1);
+                _triangles.Add(previousLeft + 1);
+                _triangles.Add(currentLeft);
+                _triangles.Add(currentLeft + 1);
+
+                RenderedSegmentCount++;
+            }
+
+            _segmentParticles.Clear();
+        }
+
+        private Vector3 GetSmoothedSegmentPoint(int index)
+        {
+            PaintEmitter.PaintParticle current = _segmentParticles[index];
+
+            if (index <= 0 || index >= _segmentParticles.Count - 1)
+            {
+                return current.position;
+            }
+
+            Vector3 previous = _segmentParticles[index - 1].position;
+            Vector3 next = _segmentParticles[index + 1].position;
+            return (previous + current.position * 2f + next) * 0.25f;
+        }
+
+        private Vector3 GetSegmentTangent(int index)
+        {
+            Vector3 tangent;
+
+            if (_segmentParticles.Count == 2)
+            {
+                tangent = _segmentParticles[1].position - _segmentParticles[0].position;
+            }
+            else if (index <= 0)
+            {
+                tangent = _segmentParticles[1].position - _segmentParticles[0].position;
+            }
+            else if (index >= _segmentParticles.Count - 1)
+            {
+                tangent = _segmentParticles[index].position - _segmentParticles[index - 1].position;
+            }
+            else
+            {
+                tangent = _segmentParticles[index + 1].position - _segmentParticles[index - 1].position;
+            }
+
+            return tangent.sqrMagnitude > 0.000001f ? tangent.normalized : Vector3.down;
         }
 
         private float GetAdaptiveBreakDistance(
@@ -273,6 +336,16 @@ namespace SwingingPaint.Paint
             float averageRadius = (from.radius + to.radius) * 0.5f;
             float baseBreakDistance = Mathf.Max(0.0001f, emitter.EffectiveStreamBreakDistance);
             float adaptiveBreakDistance = averageSpeed * fixedDeltaTime * adaptiveBreakSpeedScale + averageRadius * 3.5f;
+            float connectionScale = 1f;
+
+            if (emitter != null)
+            {
+                connectionScale += Mathf.Clamp01(emitter.EffectiveStreamViscosity / 2f) * 0.35f;
+                connectionScale += Mathf.Clamp01(emitter.EffectiveStreamCohesion) * 0.35f;
+            }
+
+            baseBreakDistance *= connectionScale;
+            adaptiveBreakDistance *= connectionScale;
             adaptiveBreakDistance = Mathf.Max(baseBreakDistance, adaptiveBreakDistance);
 
             return Mathf.Min(

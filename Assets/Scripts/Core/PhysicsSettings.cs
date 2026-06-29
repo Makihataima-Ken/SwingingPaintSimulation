@@ -32,6 +32,9 @@ namespace SwingingPaint.Core
         [Tooltip("Initial angular velocity in degrees per second.")]
         [SerializeField] private float angularVelocity = 0f;
 
+        [Tooltip("Initial sideways angular velocity in degrees per second. Non-zero values create a natural 3D pushed swing.")]
+        [SerializeField] private float initialLateralAngularVelocity = 25f;
+
         [Tooltip("Direction in the XZ plane in degrees (0 = along X axis).")]
         [SerializeField] private float direction = 0f;
 
@@ -75,6 +78,9 @@ namespace SwingingPaint.Core
         [Tooltip("Total quantity of paint available in the bucket.")]
         [SerializeField] private float paintQuantity = 100f;
 
+        [Tooltip("Diameter of the paint outlet hole in meters/world units.")]
+        [SerializeField] private float paintHoleDiameter = 0.035f;
+
         [Tooltip("Rate at which the surface absorbs paint.")]
         [SerializeField] private float surfaceAbsorption = 0.1f;
 
@@ -89,6 +95,7 @@ namespace SwingingPaint.Core
         public float Damping => damping;
         public float InitialAngle => initialAngle;
         public float AngularVelocity => angularVelocity;
+        public float InitialLateralAngularVelocity => initialLateralAngularVelocity;
         public float Direction => direction;
         public float BucketMass => bucketMass;
         public float PaintMass => paintMass;
@@ -103,6 +110,7 @@ namespace SwingingPaint.Core
         public float PaintFlowRate => paintFlowRate;
         public float PaintViscosity => paintViscosity;
         public float PaintQuantity => paintQuantity;
+        public float PaintHoleDiameter => paintHoleDiameter;
         public float SurfaceAbsorption => surfaceAbsorption;
         public float PaintSpreadRadius => paintSpreadRadius;
 
@@ -144,6 +152,13 @@ namespace SwingingPaint.Core
         {
             if (Mathf.Approximately(angularVelocity, value)) return;
             angularVelocity = value;
+            NotifyChanged();
+        }
+
+        public void SetInitialLateralAngularVelocity(float value)
+        {
+            if (Mathf.Approximately(initialLateralAngularVelocity, value)) return;
+            initialLateralAngularVelocity = value;
             NotifyChanged();
         }
 
@@ -224,6 +239,13 @@ namespace SwingingPaint.Core
             NotifyChanged();
         }
 
+        public void SetPaintHoleDiameter(float value)
+        {
+            if (Mathf.Approximately(paintHoleDiameter, value)) return;
+            paintHoleDiameter = Mathf.Max(0f, value);
+            NotifyChanged();
+        }
+
         public void SetSurfaceAbsorption(float value)
         {
             if (Mathf.Approximately(surfaceAbsorption, value)) return;
@@ -247,6 +269,7 @@ namespace SwingingPaint.Core
             // Ensure all values are within safe ranges when edited in the Inspector
             gravity = Mathf.Max(0f, gravity);
             damping = Mathf.Max(0f, damping);
+            initialLateralAngularVelocity = Mathf.Clamp(initialLateralAngularVelocity, -720f, 720f);
             bucketMass = Mathf.Max(0.01f, bucketMass);
             paintMass = Mathf.Max(0f, paintMass);
             airResistance = Mathf.Max(0f, airResistance);
@@ -257,6 +280,7 @@ namespace SwingingPaint.Core
             paintFlowRate = Mathf.Max(0f, paintFlowRate);
             paintViscosity = Mathf.Max(0f, paintViscosity);
             paintQuantity = Mathf.Max(0f, paintQuantity);
+            paintHoleDiameter = Mathf.Max(0f, paintHoleDiameter);
             surfaceAbsorption = Mathf.Max(0f, surfaceAbsorption);
             paintSpreadRadius = Mathf.Max(0.01f, paintSpreadRadius);
         }

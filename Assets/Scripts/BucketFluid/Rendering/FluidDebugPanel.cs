@@ -17,6 +17,7 @@ namespace SwingingPaint.BucketFluid.Rendering
         public BucketMotionProvider motionProvider;
         public GPUFluidRenderer fluidRenderer;
         public PaintEmitter paintEmitter;
+        public GPUFluidOutflowController gpuOutflowController;
 
         [Header("Display")]
         public bool showPanel = true;
@@ -97,6 +98,29 @@ namespace SwingingPaint.BucketFluid.Rendering
             GUILayout.Label($"Adaptive Break Distance: {(paintEmitter != null ? paintEmitter.CurrentAdaptiveBreakDistance : 0f):F4}");
             GUILayout.Label($"Current Flow Rate: {(paintEmitter != null ? paintEmitter.CurrentFlowRate : 0f):F3}");
             GUILayout.Label($"Remaining Paint: {(paintEmitter != null ? paintEmitter.RemainingPaintQuantity : 0f):F3}");
+            GUILayout.Label($"Falling Stream Physics: {(paintEmitter != null ? paintEmitter.fallingStreamPhysicsMode.ToString() : "n/a")}");
+            GUILayout.Label($"Stream Neighbors: {(paintEmitter != null ? paintEmitter.FallingStreamNeighborCount : 0)}");
+            GUILayout.Label($"Avg Falling Density: {(paintEmitter != null ? paintEmitter.AverageStreamDensity : 0f):F3}");
+            GUILayout.Label($"Max Falling Density: {(paintEmitter != null ? paintEmitter.MaxStreamDensity : 0f):F3}");
+            GUILayout.Label($"Deposits/Tick: {(paintEmitter != null ? paintEmitter.DepositsThisTick : 0)}");
+            GUILayout.Label($"Canvas Flushed/Tick: {paintEmitter != null && paintEmitter.CanvasFlushedThisTick}");
+            GUILayout.Label($"Surface Contact Mode: {paintEmitter != null && paintEmitter.SurfaceContactModeEnabled}");
+            GUILayout.Label($"Last Contact Radius: {(paintEmitter != null ? paintEmitter.LastCanvasContactRadius : 0f):F4}");
+            GUILayout.Label($"Last Contact Prediction: {(paintEmitter != null ? paintEmitter.LastCanvasContactPredictionDistance : 0f):F4}");
+            GUILayout.Label($"Predicted Contacts/Tick: {(paintEmitter != null ? paintEmitter.PredictedCanvasContactsThisTick : 0)}");
+            GUILayout.Label($"Canvas Dirty Before Render: {paintEmitter != null && paintEmitter.CanvasTextureDirtyBeforeRender}");
+            GUILayout.Label($"GPU Outflow Enabled: {gpuOutflowController != null && gpuOutflowController.gpuOutflowEnabled}");
+            GUILayout.Label($"GPU Outflow Capacity: {(gpuOutflowController != null ? gpuOutflowController.OutflowCapacity : 0)}");
+            GUILayout.Label($"GPU Outflow Active: {(gpuOutflowController != null ? gpuOutflowController.ActiveOutflowParticles : 0)}");
+            GUILayout.Label($"GPU Extraction Budget/Substep: {(gpuOutflowController != null ? gpuOutflowController.CurrentExtractionBudget : 0)}");
+            GUILayout.Label($"GPU Outflow Radius: {(gpuOutflowController != null ? gpuOutflowController.EffectiveOutflowParticleRadius : 0f):F4}");
+            GUILayout.Label($"GPU Drain Capture Radius: {(gpuOutflowController != null ? gpuOutflowController.EffectiveDrainCaptureRadius : 0f):F4}");
+            GUILayout.Label($"GPU Outflow Emitted/Tick: {(gpuOutflowController != null ? gpuOutflowController.EmittedParticlesThisTick : 0)}");
+            GUILayout.Label($"GPU Outflow Impacts/Tick: {(gpuOutflowController != null ? gpuOutflowController.DepositedImpactsThisTick : 0)}");
+            GUILayout.Label($"GPU Canvas Writes/Tick: {(gpuOutflowController != null ? gpuOutflowController.CanvasGpuWritesThisTick : 0)}");
+            GUILayout.Label($"GPU Stream Connectors: {(gpuOutflowController != null ? gpuOutflowController.StreamConnectorCount : 0)}");
+            GUILayout.Label($"GPU Outflow Overflow/Tick: {(gpuOutflowController != null ? gpuOutflowController.BufferOverflowThisTick : 0)}");
+            GUILayout.Label($"GPU Outflow Avg Density: {(gpuOutflowController != null ? gpuOutflowController.AverageOutflowDensity : 0f):F3}");
 
             if (simulator != null && simulator.boundary != null)
             {
@@ -179,6 +203,16 @@ namespace SwingingPaint.BucketFluid.Rendering
             if (paintEmitter == null)
             {
                 paintEmitter = GetComponentInParent<PaintEmitter>();
+            }
+
+            if (gpuOutflowController == null)
+            {
+                gpuOutflowController = GetComponentInChildren<GPUFluidOutflowController>();
+            }
+
+            if (gpuOutflowController == null)
+            {
+                gpuOutflowController = GetComponentInParent<GPUFluidOutflowController>();
             }
         }
 

@@ -27,6 +27,12 @@ namespace SwingingPaint.Paint
             Hybrid
         }
 
+        public enum FallingStreamPhysicsMode
+        {
+            Ballistic,
+            CohesiveSPH
+        }
+
         public struct PaintParticle
         {
             public Vector3 position;
@@ -41,6 +47,8 @@ namespace SwingingPaint.Paint
             public bool active;
             public int streamId;
             public int orderInStream;
+            public float density;
+            public float nearDensity;
         }
 
         [Header("References")]
@@ -108,6 +116,33 @@ namespace SwingingPaint.Paint
         public float streamBreakDistance = 0.09f;
         public PaintStreamRenderer streamRenderer;
 
+        [Header("Falling Stream Physics")]
+        public FallingStreamPhysicsMode fallingStreamPhysicsMode = FallingStreamPhysicsMode.CohesiveSPH;
+        [Min(1)]
+        public int fallingSubsteps = 2;
+        [Min(0.0001f)]
+        public float streamSmoothingRadius = 0.075f;
+        [Min(0f)]
+        public float streamPressureStiffness = 45f;
+        [Min(0f)]
+        public float streamNearPressureStiffness = 90f;
+        [Min(0f)]
+        public float streamCohesion = 0.35f;
+        [Min(0f)]
+        public float streamSurfaceTension = 0.2f;
+        [Min(0.1f)]
+        public float maxFallingSpeed = 12f;
+        public bool flushCanvasAfterPaintStep = true;
+
+        [Header("Canvas Contact")]
+        public bool useVisualStreamContactRadius = true;
+        [Min(0f)]
+        public float streamContactRadiusMultiplier = 1.1f;
+        [Range(0f, 2f)]
+        public float contactPredictionFractionOfSubstep = 0.5f;
+        [Min(0f)]
+        public float maxContactPredictionDistance = 0.035f;
+
         [Header("Manual Falling Motion")]
         [Min(0f)]
         public float gravity = 9.81f;
@@ -140,10 +175,22 @@ namespace SwingingPaint.Paint
         public float CurrentAdaptiveBreakDistance => streamRenderer != null ? streamRenderer.CurrentAdaptiveBreakDistance : 0f;
         public float CurrentFlowRate => GetFlowRate();
         public Color CurrentPaintColor => GetPaintColor();
+        public float EffectiveStreamViscosity => GetStreamViscosity();
+        public float EffectiveStreamCohesion => streamCohesion;
         public Vector3 PreviousOutletPosition => _previousOutletPosition;
         public Vector3 CurrentOutletPosition => _currentOutletPosition;
         public Vector3 PreviousOutletVelocity => _previousOutletVelocity;
         public Vector3 CurrentOutletVelocity => _currentOutletVelocity;
+        public int FallingStreamNeighborCount { get; private set; }
+        public float AverageStreamDensity { get; private set; }
+        public float MaxStreamDensity { get; private set; }
+        public int DepositsThisTick { get; private set; }
+        public bool CanvasFlushedThisTick { get; private set; }
+        public bool SurfaceContactModeEnabled => paintSurface != null && paintSurface.SurfaceContactModeEnabled;
+        public float LastCanvasContactRadius { get; private set; }
+        public float LastCanvasContactPredictionDistance { get; private set; }
+        public int PredictedCanvasContactsThisTick { get; private set; }
+        public bool CanvasTextureDirtyBeforeRender { get; private set; }
         public bool ShouldRenderStreamMesh =>
             continuousStreamMode &&
             renderMode != PaintRenderMode.DropletsOnly &&
@@ -166,7 +213,9 @@ namespace SwingingPaint.Paint
         public float GetStreamVisualHalfWidth(float particleRadius)
         {
             float flowScale = Mathf.Lerp(1f, 1.45f, Mathf.Clamp01(CurrentFlowRate / 5f));
-            return Mathf.Max(0.0001f, particleRadius * streamRadiusMultiplier * flowScale);
+            float viscosityScale = Mathf.Lerp(1f, 1.2f, Mathf.Clamp01(EffectiveStreamViscosity / 2f));
+            float cohesionScale = Mathf.Lerp(1f, 1.15f, Mathf.Clamp01(streamCohesion));
+            return Mathf.Max(0.0001f, particleRadius * streamRadiusMultiplier * flowScale * viscosityScale * cohesionScale);
         }
 
         public float GetDesiredStreamSpacing()
@@ -197,6 +246,11 @@ namespace SwingingPaint.Paint
         private Vector3 _previousOutletVelocity;
         private Vector3 _currentOutletVelocity;
         private SimulationManager _subscribedSimulationManager;
+        private readonly Dictionary<Vector3Int, List<int>> _streamGrid = new Dictionary<Vector3Int, List<int>>();
+        private readonly List<int> _activeStreamIndices = new List<int>();
+        private Vector3[] _sphVelocityDeltas;
+        private float[] _streamDensities;
+        private float[] _streamNearDensities;
 
         private void Awake()
         {
@@ -257,6 +311,13 @@ namespace SwingingPaint.Paint
 
         private void LateUpdate()
         {
+            CanvasTextureDirtyBeforeRender = paintSurface != null && paintSurface.TextureDirty;
+
+            if (CanvasTextureDirtyBeforeRender && flushCanvasAfterPaintStep && paintSurface != null)
+            {
+                CanvasFlushedThisTick |= paintSurface.FlushPaintTexture();
+            }
+
             if (!drawDroplets || ActiveDropletCount <= 0)
             {
                 return;
@@ -295,6 +356,10 @@ namespace SwingingPaint.Paint
             _nextOrderInStream = 0;
             _lastEmittedParticlesPerTick = 0;
             _wasEmittingLastStep = false;
+            ResetStreamPhysicsMetrics();
+            DepositsThisTick = 0;
+            CanvasFlushedThisTick = false;
+            ResetCanvasContactMetrics();
 
             Vector3 outletPosition = GetEmissionPosition();
             _previousOutletPosition = outletPosition;
@@ -319,6 +384,9 @@ namespace SwingingPaint.Paint
             EnsureStorage();
             SampleOutletMotion(deltaTime);
             _lastEmittedParticlesPerTick = 0;
+            DepositsThisTick = 0;
+            CanvasFlushedThisTick = false;
+            ResetCanvasContactMetrics();
 
             if (CanEmit && ActiveDropletCount < maxDroplets)
             {
@@ -330,6 +398,11 @@ namespace SwingingPaint.Paint
             }
 
             UpdateDroplets(deltaTime);
+
+            if (flushCanvasAfterPaintStep && DepositsThisTick > 0 && paintSurface != null)
+            {
+                CanvasFlushedThisTick = paintSurface.FlushPaintTexture();
+            }
         }
 
         private void EmitPaint(float deltaTime)
@@ -473,7 +546,9 @@ namespace SwingingPaint.Paint
                 age = 0f,
                 active = true,
                 streamId = streamEmission ? _currentStreamId : -1,
-                orderInStream = streamEmission ? _nextOrderInStream++ : _spawnSerial
+                orderInStream = streamEmission ? _nextOrderInStream++ : _spawnSerial,
+                density = 0f,
+                nearDensity = 0f
             };
 
             _droplets[index] = droplet;
@@ -483,8 +558,27 @@ namespace SwingingPaint.Paint
 
         private void UpdateDroplets(float deltaTime)
         {
-            int activeCount = 0;
-            float viscosityDamping = GetPaintViscosity() * viscosityDampingMultiplier;
+            int substeps = ShouldUseCohesiveStreamPhysics()
+                ? Mathf.Max(1, fallingSubsteps)
+                : 1;
+            float substepDeltaTime = deltaTime / substeps;
+
+            for (int i = 0; i < substeps; i++)
+            {
+                UpdateDropletsSubstep(substepDeltaTime);
+            }
+
+            RecountActiveDroplets();
+        }
+
+        private void UpdateDropletsSubstep(float deltaTime)
+        {
+            if (ShouldUseCohesiveStreamPhysics())
+            {
+                ComputeCohesiveStreamForces(deltaTime);
+            }
+
+            float viscosityDamping = GetStreamViscosity() * viscosityDampingMultiplier;
             Vector3 gravityAcceleration = Vector3.down * GetGravity();
 
             for (int i = 0; i < _droplets.Length; i++)
@@ -503,35 +597,330 @@ namespace SwingingPaint.Paint
                     continue;
                 }
 
+                if (ShouldApplyStreamPhysics(droplet) && _sphVelocityDeltas != null)
+                {
+                    droplet.velocity += _sphVelocityDeltas[i];
+                    droplet.density = _streamDensities != null ? _streamDensities[i] : 0f;
+                    droplet.nearDensity = _streamNearDensities != null ? _streamNearDensities[i] : 0f;
+                }
+
                 droplet.velocity += gravityAcceleration * deltaTime;
                 droplet.velocity *= Mathf.Max(0f, 1f - airResistance * deltaTime);
                 droplet.velocity *= Mathf.Max(0f, 1f - viscosityDamping * deltaTime);
+
+                float speed = droplet.velocity.magnitude;
+                if (speed > maxFallingSpeed)
+                {
+                    droplet.velocity = droplet.velocity / speed * maxFallingSpeed;
+                }
+
                 droplet.previousPosition = droplet.position;
                 droplet.position += droplet.velocity * deltaTime;
                 droplet.wetness = Mathf.Clamp01(1f - droplet.age / droplet.lifetime);
+
+                float contactRadius = GetCanvasContactRadius(droplet);
+                float contactPredictionDistance = GetCanvasContactPredictionDistance(droplet.velocity, deltaTime);
+                Vector3 contactEndPosition = droplet.position;
+
+                if (contactPredictionDistance > 0f)
+                {
+                    contactEndPosition += droplet.velocity.normalized * contactPredictionDistance;
+                }
+
+                LastCanvasContactRadius = contactRadius;
+                LastCanvasContactPredictionDistance = contactPredictionDistance;
 
                 if (depositOnPaintSurface &&
                     paintSurface != null &&
                     paintSurface.TryDepositSegment(
                         droplet.previousPosition,
-                        droplet.position,
+                        contactEndPosition,
                         droplet.radius,
+                        contactRadius,
                         droplet.color,
                         droplet.wetness,
                         droplet.amount,
                         GetPaintViscosity(),
                         GetFlowRate()))
                 {
+                    DepositsThisTick++;
+                    if (contactPredictionDistance > 0f)
+                    {
+                        PredictedCanvasContactsThisTick++;
+                    }
+
                     droplet.active = false;
                     _droplets[i] = droplet;
                     continue;
                 }
 
                 _droplets[i] = droplet;
-                activeCount++;
+            }
+        }
+
+        private void ComputeCohesiveStreamForces(float deltaTime)
+        {
+            ResetStreamPhysicsMetrics();
+
+            if (_droplets == null || _sphVelocityDeltas == null || deltaTime <= Mathf.Epsilon)
+            {
+                return;
+            }
+
+            System.Array.Clear(_sphVelocityDeltas, 0, _sphVelocityDeltas.Length);
+            System.Array.Clear(_streamDensities, 0, _streamDensities.Length);
+            System.Array.Clear(_streamNearDensities, 0, _streamNearDensities.Length);
+
+            float smoothingRadius = GetStreamSmoothingRadius();
+            BuildStreamSpatialGrid(smoothingRadius);
+
+            if (_activeStreamIndices.Count < 2)
+            {
+                return;
+            }
+
+            MeasureStreamDensities(smoothingRadius);
+            ApplyPairwiseStreamForces(smoothingRadius, deltaTime);
+        }
+
+        private void BuildStreamSpatialGrid(float cellSize)
+        {
+            _activeStreamIndices.Clear();
+            _streamGrid.Clear();
+
+            for (int i = 0; i < _droplets.Length; i++)
+            {
+                PaintParticle droplet = _droplets[i];
+                if (!ShouldApplyStreamPhysics(droplet))
+                {
+                    continue;
+                }
+
+                _activeStreamIndices.Add(i);
+                Vector3Int cell = WorldToStreamCell(droplet.position, cellSize);
+
+                if (!_streamGrid.TryGetValue(cell, out List<int> indices))
+                {
+                    indices = new List<int>();
+                    _streamGrid.Add(cell, indices);
+                }
+
+                indices.Add(i);
+            }
+        }
+
+        private void MeasureStreamDensities(float smoothingRadius)
+        {
+            float invRadius = 1f / Mathf.Max(0.0001f, smoothingRadius);
+            int neighborTotal = 0;
+            float densityTotal = 0f;
+            float maxDensity = 0f;
+
+            for (int activeIndex = 0; activeIndex < _activeStreamIndices.Count; activeIndex++)
+            {
+                int particleIndex = _activeStreamIndices[activeIndex];
+                PaintParticle particle = _droplets[particleIndex];
+                Vector3Int centerCell = WorldToStreamCell(particle.position, smoothingRadius);
+                float density = 0f;
+                float nearDensity = 0f;
+                int neighborCount = 0;
+
+                for (int z = -1; z <= 1; z++)
+                {
+                    for (int y = -1; y <= 1; y++)
+                    {
+                        for (int x = -1; x <= 1; x++)
+                        {
+                            Vector3Int cell = new Vector3Int(centerCell.x + x, centerCell.y + y, centerCell.z + z);
+                            if (!_streamGrid.TryGetValue(cell, out List<int> indices))
+                            {
+                                continue;
+                            }
+
+                            for (int i = 0; i < indices.Count; i++)
+                            {
+                                int neighborIndex = indices[i];
+                                if (neighborIndex == particleIndex)
+                                {
+                                    continue;
+                                }
+
+                                PaintParticle neighbor = _droplets[neighborIndex];
+                                float distance = Vector3.Distance(particle.position, neighbor.position);
+                                if (distance >= smoothingRadius)
+                                {
+                                    continue;
+                                }
+
+                                float q = 1f - distance * invRadius;
+                                density += q * q;
+                                nearDensity += q * q * q;
+                                neighborCount++;
+                            }
+                        }
+                    }
+                }
+
+                _streamDensities[particleIndex] = density;
+                _streamNearDensities[particleIndex] = nearDensity;
+                neighborTotal += neighborCount;
+                densityTotal += density;
+                maxDensity = Mathf.Max(maxDensity, density);
+            }
+
+            FallingStreamNeighborCount = neighborTotal;
+            AverageStreamDensity = _activeStreamIndices.Count > 0 ? densityTotal / _activeStreamIndices.Count : 0f;
+            MaxStreamDensity = maxDensity;
+        }
+
+        private void ApplyPairwiseStreamForces(float smoothingRadius, float deltaTime)
+        {
+            float invRadius = 1f / Mathf.Max(0.0001f, smoothingRadius);
+            float viscosity = GetStreamViscosity();
+            float cohesion = streamCohesion;
+            float surfaceTension = streamSurfaceTension;
+
+            for (int activeIndex = 0; activeIndex < _activeStreamIndices.Count; activeIndex++)
+            {
+                int particleIndex = _activeStreamIndices[activeIndex];
+                PaintParticle particle = _droplets[particleIndex];
+                Vector3Int centerCell = WorldToStreamCell(particle.position, smoothingRadius);
+
+                for (int z = -1; z <= 1; z++)
+                {
+                    for (int y = -1; y <= 1; y++)
+                    {
+                        for (int x = -1; x <= 1; x++)
+                        {
+                            Vector3Int cell = new Vector3Int(centerCell.x + x, centerCell.y + y, centerCell.z + z);
+                            if (!_streamGrid.TryGetValue(cell, out List<int> indices))
+                            {
+                                continue;
+                            }
+
+                            for (int i = 0; i < indices.Count; i++)
+                            {
+                                int neighborIndex = indices[i];
+                                if (neighborIndex <= particleIndex)
+                                {
+                                    continue;
+                                }
+
+                                PaintParticle neighbor = _droplets[neighborIndex];
+                                Vector3 delta = neighbor.position - particle.position;
+                                float distance = delta.magnitude;
+                                if (distance >= smoothingRadius)
+                                {
+                                    continue;
+                                }
+
+                                Vector3 normal = distance > 0.00001f
+                                    ? delta / distance
+                                    : GetDeterministicJitter(particleIndex + neighborIndex, 1f).normalized;
+
+                                if (normal.sqrMagnitude <= 0.000001f)
+                                {
+                                    normal = Vector3.up;
+                                }
+
+                                float q = 1f - distance * invRadius;
+                                float averageDensity = Mathf.Max(
+                                    0.0001f,
+                                    _streamDensities[particleIndex] + _streamDensities[neighborIndex]);
+                                float pressure = (streamPressureStiffness * q * q +
+                                                  streamNearPressureStiffness * q * q * q) / averageDensity;
+                                float pressureImpulse = pressure * deltaTime * 0.02f;
+                                float cohesionImpulse = (cohesion * q + surfaceTension * q * q * 0.5f) * deltaTime;
+                                Vector3 relativeVelocity = neighbor.velocity - particle.velocity;
+                                Vector3 viscosityImpulse = relativeVelocity * (viscosity * q * deltaTime * 0.18f);
+
+                                _sphVelocityDeltas[particleIndex] -= normal * pressureImpulse;
+                                _sphVelocityDeltas[neighborIndex] += normal * pressureImpulse;
+                                _sphVelocityDeltas[particleIndex] += normal * cohesionImpulse;
+                                _sphVelocityDeltas[neighborIndex] -= normal * cohesionImpulse;
+                                _sphVelocityDeltas[particleIndex] += viscosityImpulse;
+                                _sphVelocityDeltas[neighborIndex] -= viscosityImpulse;
+                            }
+                        }
+                    }
+                }
+            }
+
+            float maxDelta = Mathf.Max(0.05f, maxFallingSpeed * 0.2f);
+            for (int i = 0; i < _activeStreamIndices.Count; i++)
+            {
+                int index = _activeStreamIndices[i];
+                float magnitude = _sphVelocityDeltas[index].magnitude;
+                if (magnitude > maxDelta)
+                {
+                    _sphVelocityDeltas[index] = _sphVelocityDeltas[index] / magnitude * maxDelta;
+                }
+            }
+        }
+
+        private bool ShouldUseCohesiveStreamPhysics()
+        {
+            return fallingStreamPhysicsMode == FallingStreamPhysicsMode.CohesiveSPH;
+        }
+
+        private static bool ShouldApplyStreamPhysics(PaintParticle particle)
+        {
+            return particle.active && particle.streamId >= 0 && particle.wetness > 0f;
+        }
+
+        private void RecountActiveDroplets()
+        {
+            int activeCount = 0;
+
+            for (int i = 0; i < _droplets.Length; i++)
+            {
+                if (_droplets[i].active)
+                {
+                    activeCount++;
+                }
             }
 
             ActiveDropletCount = activeCount;
+        }
+
+        private void ResetStreamPhysicsMetrics()
+        {
+            FallingStreamNeighborCount = 0;
+            AverageStreamDensity = 0f;
+            MaxStreamDensity = 0f;
+        }
+
+        private void ResetCanvasContactMetrics()
+        {
+            LastCanvasContactRadius = 0f;
+            LastCanvasContactPredictionDistance = 0f;
+            PredictedCanvasContactsThisTick = 0;
+            CanvasTextureDirtyBeforeRender = false;
+        }
+
+        private float GetCanvasContactRadius(PaintParticle droplet)
+        {
+            float contactRadius = Mathf.Max(0f, droplet.radius);
+
+            if (useVisualStreamContactRadius && droplet.streamId >= 0)
+            {
+                float visualRadius = GetStreamVisualHalfWidth(droplet.radius) * streamContactRadiusMultiplier;
+                contactRadius = Mathf.Max(contactRadius, visualRadius);
+            }
+
+            return contactRadius;
+        }
+
+        private float GetCanvasContactPredictionDistance(Vector3 velocity, float deltaTime)
+        {
+            float speed = velocity.magnitude;
+            if (speed <= Mathf.Epsilon || deltaTime <= Mathf.Epsilon)
+            {
+                return 0f;
+            }
+
+            float predictedDistance = speed * deltaTime * contactPredictionFractionOfSubstep;
+            return Mathf.Min(predictedDistance, maxContactPredictionDistance);
         }
 
         private int FindDropletSlot()
@@ -728,6 +1117,13 @@ namespace SwingingPaint.Paint
             {
                 _matrices = new Matrix4x4[InstancedBatchSize];
             }
+
+            if (_sphVelocityDeltas == null || _sphVelocityDeltas.Length != safeMaxDroplets)
+            {
+                _sphVelocityDeltas = new Vector3[safeMaxDroplets];
+                _streamDensities = new float[safeMaxDroplets];
+                _streamNearDensities = new float[safeMaxDroplets];
+            }
         }
 
         private void EnsureRenderResources()
@@ -911,6 +1307,18 @@ namespace SwingingPaint.Paint
             return defaultPaintViscosity;
         }
 
+        private float GetStreamSmoothingRadius()
+        {
+            float fallback = fluidSettings != null ? fluidSettings.smoothingRadius : 0.075f;
+            float radius = streamSmoothingRadius > 0f ? streamSmoothingRadius : fallback;
+            return Mathf.Max(minDropletRadius * 2f, radius);
+        }
+
+        private float GetStreamViscosity()
+        {
+            return Mathf.Max(0f, GetPaintViscosity());
+        }
+
         private float GetInitialPaintQuantity()
         {
             return physicsSettings != null ? physicsSettings.PaintQuantity : defaultPaintQuantity;
@@ -955,6 +1363,16 @@ namespace SwingingPaint.Paint
                 int seed = index * 73856093 ^ salt * 19349663;
                 return Mathf.Repeat(Mathf.Sin(seed * 12.9898f) * 43758.5453f, 1f) * 2f - 1f;
             }
+        }
+
+        private static Vector3Int WorldToStreamCell(Vector3 position, float cellSize)
+        {
+            float safeCellSize = Mathf.Max(0.0001f, cellSize);
+            return new Vector3Int(
+                Mathf.FloorToInt(position.x / safeCellSize),
+                Mathf.FloorToInt(position.y / safeCellSize),
+                Mathf.FloorToInt(position.z / safeCellSize)
+            );
         }
 
         private static Mesh CreateDropletMesh()
@@ -1011,6 +1429,16 @@ namespace SwingingPaint.Paint
             streamRadiusMultiplier = Mathf.Max(0.01f, streamRadiusMultiplier);
             streamVelocityJitter = Mathf.Clamp(streamVelocityJitter, 0f, 0.25f);
             streamBreakDistance = Mathf.Max(0f, streamBreakDistance);
+            fallingSubsteps = Mathf.Max(1, fallingSubsteps);
+            streamSmoothingRadius = Mathf.Max(0.0001f, streamSmoothingRadius);
+            streamPressureStiffness = Mathf.Max(0f, streamPressureStiffness);
+            streamNearPressureStiffness = Mathf.Max(0f, streamNearPressureStiffness);
+            streamCohesion = Mathf.Max(0f, streamCohesion);
+            streamSurfaceTension = Mathf.Max(0f, streamSurfaceTension);
+            maxFallingSpeed = Mathf.Max(0.1f, maxFallingSpeed);
+            streamContactRadiusMultiplier = Mathf.Max(0f, streamContactRadiusMultiplier);
+            contactPredictionFractionOfSubstep = Mathf.Clamp(contactPredictionFractionOfSubstep, 0f, 2f);
+            maxContactPredictionDistance = Mathf.Max(0f, maxContactPredictionDistance);
             gravity = Mathf.Max(0f, gravity);
             airResistance = Mathf.Max(0f, airResistance);
             viscosityDampingMultiplier = Mathf.Max(0f, viscosityDampingMultiplier);

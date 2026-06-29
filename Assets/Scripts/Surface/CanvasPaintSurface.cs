@@ -43,11 +43,18 @@ namespace SwingingPaint.Surface
         public float opacityMultiplier = 0.85f;
         [Range(0f, 3f)]
         public float flowSpreadBoost = 0.15f;
+        public bool surfaceContactMode = true;
+        [Range(0f, 2f)]
+        public float contactOffsetMultiplier = 1f;
+        public bool gpuCanvasMode = true;
 
         public RenderTexture PaintTexture { get; private set; }
         public int DepositedImpactCount { get; private set; }
         public float TotalPaintDeposited { get; private set; }
         public float CoverageArea { get; private set; }
+        public bool SurfaceContactModeEnabled => surfaceContactMode;
+        public bool TextureDirty => _textureDirty;
+        public bool GpuCanvasModeEnabled => gpuCanvasMode && PaintTexture != null && PaintTexture.enableRandomWrite;
 
         private Texture2D _paintTexture2D;
         private Color[] _pixels;
@@ -112,11 +119,51 @@ namespace SwingingPaint.Surface
             float viscosity,
             float flowRate)
         {
+            return TryDepositSegment(
+                previousWorldPosition,
+                currentWorldPosition,
+                particleRadius,
+                particleRadius,
+                color,
+                wetness,
+                amount,
+                viscosity,
+                flowRate);
+        }
+
+        public bool TryDepositSegment(
+            Vector3 previousWorldPosition,
+            Vector3 currentWorldPosition,
+            float paintRadius,
+            float contactRadius,
+            Color color,
+            float wetness,
+            float amount,
+            float viscosity,
+            float flowRate)
+        {
             EnsureTexture();
 
             Plane plane = GetSurfacePlane();
             float previousDistance = plane.GetDistanceToPoint(previousWorldPosition);
             float currentDistance = plane.GetDistanceToPoint(currentWorldPosition);
+
+            if (surfaceContactMode)
+            {
+                return TryDepositSweptSphere(
+                    plane,
+                    previousWorldPosition,
+                    currentWorldPosition,
+                    previousDistance,
+                    currentDistance,
+                    paintRadius,
+                    contactRadius,
+                    color,
+                    wetness,
+                    amount,
+                    viscosity,
+                    flowRate);
+            }
 
             if (previousDistance < 0f || currentDistance > 0f)
             {
@@ -133,7 +180,51 @@ namespace SwingingPaint.Surface
                 return true;
             }
 
-            DepositAtUV(uv, particleRadius, color, wetness, amount, viscosity, flowRate);
+            DepositAtUV(uv, paintRadius, color, wetness, amount, viscosity, flowRate);
+            return true;
+        }
+
+        private bool TryDepositSweptSphere(
+            Plane plane,
+            Vector3 previousWorldPosition,
+            Vector3 currentWorldPosition,
+            float previousDistance,
+            float currentDistance,
+            float paintRadius,
+            float contactRadius,
+            Color color,
+            float wetness,
+            float amount,
+            float viscosity,
+            float flowRate)
+        {
+            float contactDistance = Mathf.Max(0f, contactRadius * contactOffsetMultiplier);
+            float previousSurfaceDistance = previousDistance - contactDistance;
+            float currentSurfaceDistance = currentDistance - contactDistance;
+
+            if (previousSurfaceDistance > 0f && currentSurfaceDistance > 0f)
+            {
+                return false;
+            }
+
+            if (previousDistance < -contactDistance && currentDistance < -contactDistance)
+            {
+                return false;
+            }
+
+            float denominator = previousSurfaceDistance - currentSurfaceDistance;
+            float t = denominator > Mathf.Epsilon ? previousSurfaceDistance / denominator : 1f;
+            t = Mathf.Clamp01(t);
+
+            Vector3 centerAtContact = Vector3.Lerp(previousWorldPosition, currentWorldPosition, t);
+            Vector3 impactPoint = centerAtContact - plane.normal * plane.GetDistanceToPoint(centerAtContact);
+
+            if (!TryWorldToUV(impactPoint, out Vector2 uv))
+            {
+                return true;
+            }
+
+            DepositAtUV(uv, paintRadius, color, wetness, amount, viscosity, flowRate);
             return true;
         }
 
@@ -213,17 +304,18 @@ namespace SwingingPaint.Surface
             UpdateCoverageArea();
         }
 
-        public void FlushPaintTexture()
+        public bool FlushPaintTexture()
         {
             if (!_textureDirty)
             {
-                return;
+                return false;
             }
 
             _paintTexture2D.SetPixels(_pixels);
             _paintTexture2D.Apply(false, false);
             Graphics.Blit(_paintTexture2D, PaintTexture);
             _textureDirty = false;
+            return true;
         }
 
         private bool TryWorldToUV(Vector3 worldPosition, out Vector2 uv)
@@ -317,7 +409,8 @@ namespace SwingingPaint.Surface
                 _paintTexture2D.height != safeHeight ||
                 PaintTexture == null ||
                 PaintTexture.width != safeWidth ||
-                PaintTexture.height != safeHeight;
+                PaintTexture.height != safeHeight ||
+                !PaintTexture.enableRandomWrite;
 
             if (!needsTexture)
             {
@@ -339,7 +432,8 @@ namespace SwingingPaint.Surface
             {
                 name = "Runtime Canvas Paint Texture",
                 wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear
+                filterMode = FilterMode.Bilinear,
+                enableRandomWrite = true
             };
             PaintTexture.Create();
 
@@ -411,6 +505,7 @@ namespace SwingingPaint.Surface
             maxImpactRadius = Mathf.Max(minImpactRadius, maxImpactRadius);
             opacityMultiplier = Mathf.Clamp(opacityMultiplier, 0f, 2f);
             flowSpreadBoost = Mathf.Clamp(flowSpreadBoost, 0f, 3f);
+            contactOffsetMultiplier = Mathf.Clamp(contactOffsetMultiplier, 0f, 2f);
         }
     }
 }

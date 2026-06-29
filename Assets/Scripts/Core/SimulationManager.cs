@@ -34,6 +34,7 @@ namespace SwingingPaint.Core
         public SimulationSettings simulationSettings;
         public BucketMotionProvider bucketMotionProvider;
         public GPUFluidSimulator fluidSimulator;
+        public GPUFluidOutflowController gpuOutflowController;
         public PaintEmitter paintEmitter;
         public CanvasPaintSurface paintSurface;
         public UIController uiController;
@@ -219,6 +220,11 @@ namespace SwingingPaint.Core
                 fluidSimulator.ResetFluid();
             }
 
+            if (gpuOutflowController != null)
+            {
+                gpuOutflowController.ResetOutflow();
+            }
+
             if (paintEmitter != null)
             {
                 paintEmitter.ResetEmitter();
@@ -257,6 +263,7 @@ namespace SwingingPaint.Core
             physicsSettings.SetDamping(0.05f);
             physicsSettings.SetInitialAngle(30f);
             physicsSettings.SetAngularVelocity(0f);
+            physicsSettings.SetInitialLateralAngularVelocity(25f);
             physicsSettings.SetDirection(0f);
             physicsSettings.SetBucketMass(1.2f);
             physicsSettings.SetPaintMass(1f);
@@ -268,6 +275,7 @@ namespace SwingingPaint.Core
             physicsSettings.SetPaintFlowRate(1.0f);
             physicsSettings.SetPaintViscosity(0.5f);
             physicsSettings.SetPaintQuantity(100f);
+            physicsSettings.SetPaintHoleDiameter(0.035f);
             physicsSettings.SetSurfaceAbsorption(0.1f);
             physicsSettings.SetPaintSpreadRadius(0.2f);
 
@@ -337,9 +345,16 @@ namespace SwingingPaint.Core
                 paintEmitter.physicsSettings = physicsSettings;
                 paintEmitter.gravity = physicsSettings.Gravity;
                 paintEmitter.airResistance = physicsSettings.AirResistance;
+                paintEmitter.holeDiameter = physicsSettings.PaintHoleDiameter;
                 paintEmitter.defaultFlowRate = physicsSettings.PaintFlowRate;
                 paintEmitter.defaultPaintViscosity = physicsSettings.PaintViscosity;
                 paintEmitter.defaultPaintQuantity = physicsSettings.PaintQuantity;
+            }
+
+            if (gpuOutflowController != null)
+            {
+                gpuOutflowController.physicsSettings = physicsSettings;
+                gpuOutflowController.holeDiameter = physicsSettings.PaintHoleDiameter;
             }
 
             if (paintSurface != null)
@@ -364,6 +379,7 @@ namespace SwingingPaint.Core
 
             pendulum.initialAngleDegrees = physicsSettings.InitialAngle;
             pendulum.initialAngularVelocity = physicsSettings.AngularVelocity;
+            pendulum.initialLateralAngularVelocityDegrees = physicsSettings.InitialLateralAngularVelocity;
             pendulum.directionAngleDegrees = physicsSettings.Direction;
             pendulum.swingDirectionDegrees = physicsSettings.Direction;
             pendulum.damping = physicsSettings.Damping;
@@ -398,7 +414,13 @@ namespace SwingingPaint.Core
                 fluidSimulator.StepSimulation(deltaTime);
             }
 
-            if (paintEmitter != null)
+            if (gpuOutflowController == null && fluidSimulator != null)
+            {
+                gpuOutflowController = fluidSimulator.outflowController;
+            }
+
+            bool gpuOutflowCanRun = gpuOutflowController != null && gpuOutflowController.CanRunPrimaryOutflow;
+            if (paintEmitter != null && !gpuOutflowCanRun)
             {
                 paintEmitter.Step(deltaTime);
             }
@@ -445,6 +467,16 @@ namespace SwingingPaint.Core
                 fluidSimulator = FindObjectOfType<GPUFluidSimulator>();
             }
 
+            if (gpuOutflowController == null && fluidSimulator != null)
+            {
+                gpuOutflowController = fluidSimulator.outflowController;
+            }
+
+            if (gpuOutflowController == null)
+            {
+                gpuOutflowController = FindObjectOfType<GPUFluidOutflowController>();
+            }
+
             if (paintEmitter == null)
             {
                 paintEmitter = FindObjectOfType<PaintEmitter>();
@@ -469,6 +501,11 @@ namespace SwingingPaint.Core
             if (paintEmitter != null && paintEmitter.physicsSettings == null)
             {
                 paintEmitter.physicsSettings = physicsSettings;
+            }
+
+            if (gpuOutflowController != null && gpuOutflowController.physicsSettings == null)
+            {
+                gpuOutflowController.physicsSettings = physicsSettings;
             }
 
             if (paintSurface != null && paintSurface.physicsSettings == null)

@@ -118,6 +118,7 @@ namespace SwingingPaint.BucketFluid.Core
         public ComputeShader fluidComputeShader;
         public BucketMotionProvider motionProvider;
         public BucketFluidBoundary boundary;
+        public GPUFluidOutflowController outflowController;
 
         [Header("Simulation")]
         [Tooltip("Keeps particles inside the mathematical bucket boundary after predicted motion.")]
@@ -342,6 +343,11 @@ namespace SwingingPaint.BucketFluid.Core
             EnsureSpatialGridBuffers();
             BuildSpatialGridForCurrentParticles();
 
+            if (outflowController != null && outflowController.gpuOutflowEnabled)
+            {
+                outflowController.ResetOutflow();
+            }
+
             if (pauseAfterReset)
             {
                 pauseSimulation = true;
@@ -423,6 +429,32 @@ namespace SwingingPaint.BucketFluid.Core
                 boundary = GetComponent<BucketFluidBoundary>();
             }
 
+            if (outflowController == null)
+            {
+                outflowController = GetComponentInChildren<GPUFluidOutflowController>();
+            }
+
+            if (outflowController == null)
+            {
+                Transform paintHole = transform.Find("PaintHole");
+                if (paintHole != null)
+                {
+                    outflowController = paintHole.GetComponent<GPUFluidOutflowController>();
+                    if (outflowController == null)
+                    {
+                        outflowController = paintHole.gameObject.AddComponent<GPUFluidOutflowController>();
+                    }
+                }
+            }
+
+            if (outflowController != null)
+            {
+                outflowController.simulator = this;
+                outflowController.settings = settings;
+                outflowController.motionProvider = motionProvider;
+                outflowController.boundary = boundary;
+            }
+
 #if UNITY_EDITOR
             if (fluidComputeShader == null)
             {
@@ -476,6 +508,12 @@ namespace SwingingPaint.BucketFluid.Core
                 SetSimulationShaderParameters(substepDeltaTime);
                 fluidComputeShader.Dispatch(_applyForcesKernel, groups, 1, 1);
                 fluidComputeShader.Dispatch(_predictPositionsKernel, groups, 1, 1);
+
+                if (outflowController != null && outflowController.gpuOutflowEnabled)
+                {
+                    outflowController.StepOutflowFromBucket(this, _particleBuffer, InitializedParticleCount, substepDeltaTime);
+                }
+
                 DispatchSpatialGrid(groups);
 
                 if (SpatialGridBufferValid)

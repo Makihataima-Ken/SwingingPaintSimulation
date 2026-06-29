@@ -3,53 +3,21 @@ using UnityEngine.Serialization;
 using SwingingPaint.Core;
 
 /// <summary>
-/// Manually simulates an ELASTIC (spring) pendulum for the paint bucket.
+/// Manually simulates the swinging paint bucket.
 ///
-/// This script does not use Rigidbody, Colliders, SpringJoint, any Unity joint, or Unity's
-/// built-in physics engine. Everything is integrated by hand.
+/// The default mode is a custom 3D elastic pendulum: the bucket is a point mass moved by
+/// gravity, rope tension, radial damping, air resistance, and an initial push velocity. It does
+/// not use Rigidbody, Colliders, SpringJoint, any Unity joint, or Unity's built-in physics engine.
 ///
-/// Research model
-/// --------------
-/// The original implementation was a fixed-length damped pendulum: a single angle theta was
-/// integrated and the bucket was placed on a circle of constant radius L. This upgrade turns
-/// the rigid rod into a stretchy rope by making the rope length r a second dynamic degree of
-/// freedom governed by Hooke's Law (F = -k * x).
-///
-/// The bucket is treated as a point mass in the vertical swing plane defined by
-/// directionAngleDegrees (phi) in the horizontal XZ canvas plane. The state is the polar pair
-/// (r, theta): r is the current rope length, theta is the angle from the downward vertical.
-/// The elastic-pendulum equations of motion use total moving mass:
-///
-///     extension x   = r - restLength                      (signed stretch)
-///     movingMass    = bucketMass + paintMass
-///     springAccel   = (k_eff * x) / movingMass if x > 0 else 0
-///     r''     = r * theta'^2 + g * cos(theta) - springAccel - dampingForce / movingMass
-///     theta'' = (-g * sin(theta) - 2 * r' * theta') / r - damping * theta' - airDrag / movingMass
-///
-/// where:
-///   * k_eff   = ropeStiffness / (1 + ropeElasticity)  -- elasticity softens the spring so a
-///               higher ropeElasticity yields more stretch under the same load.
-///   * the r*theta'^2 term is the centrifugal stretch from swinging,
-///   * g*cos(theta) is gravity projected along the rope,
-///   * -springAccel is the Hooke restoring force pulling the bucket back toward restLength,
-///   * the -2*r'*theta'/r term is the Coriolis coupling between stretch and swing.
-///
-/// Position mapping (unchanged from the original, but now using the dynamic length r):
-///     x = anchor.x + r * sin(theta) * cos(phi)
-///     y = anchor.y - r * cos(theta)
-///     z = anchor.z + r * sin(theta) * sin(phi)
-///
-/// Assign bucketTransform to BucketRig, not BucketModel. BucketRig is the motion point used by
-/// the custom physics; BucketModel is only a visual child offset below that point.
+/// PlanarPendulum is kept as a fallback/debug comparison for the earlier single-plane elastic
+/// pendulum model.
 /// </summary>
 public class Pendulum : MonoBehaviour
 {
     public enum MotionMode
     {
-        PlanarPendulum,
-        DiagonalPendulum,
-        EllipseDemo,
-        FigureEightDemo
+        Physical3DPendulum,
+        PlanarPendulum
     }
 
     [Header("References")]
@@ -66,57 +34,31 @@ public class Pendulum : MonoBehaviour
     [Tooltip("Starting angle from vertical, in degrees.")]
     public float initialAngleDegrees = 30f;
 
-    [Tooltip("Starting angular velocity, in degrees per second.")]
+    [Tooltip("Starting forward angular velocity in the pull direction, in degrees per second.")]
     public float initialAngularVelocity = 0f;
 
-    [Tooltip("Direction of the swing plane in the XZ canvas plane. 0 degrees swings along +X.")]
+    [Tooltip("Starting sideways angular velocity, in degrees per second. Non-zero values create a natural 3D pushed swing.")]
+    public float initialLateralAngularVelocityDegrees = 25f;
+
+    [Tooltip("Direction of the initial pull/push in the XZ plane. 0 degrees points along +X.")]
     public float directionAngleDegrees = 0f;
 
-    [Tooltip("Angular (swing) damping applied to angular velocity. Higher values settle the swing faster.")]
+    [Tooltip("Tangential damping applied to swinging motion. Higher values settle the swing faster.")]
     public float damping = 0.05f;
 
     [Tooltip("Manual gravitational acceleration used by the pendulum equation.")]
     public float gravity = 9.81f;
 
-    [Header("Motion Path Modes")]
-    public MotionMode motionMode = MotionMode.PlanarPendulum;
+    [Header("Motion Mode")]
+    public MotionMode motionMode = MotionMode.Physical3DPendulum;
 
-    [Tooltip("Yaw for diagonal/demo motion paths in the XZ plane. 0 degrees points along +X.")]
+    [HideInInspector]
     public float swingDirectionDegrees = 0f;
 
-    [Tooltip("Demo path amplitude along local X before yaw is applied.")]
-    [Min(0f)]
-    public float pathAmplitudeX = 1f;
-
-    [Tooltip("Demo path amplitude along local Z before yaw is applied.")]
-    [Min(0f)]
-    public float pathAmplitudeZ = 0.45f;
-
-    [Tooltip("Angular path speed for demo modes, in radians per second.")]
-    [Min(0f)]
-    public float pathSpeed = 0.8f;
-
-    [Tooltip("Demo path phase offset in degrees.")]
-    public float pathPhase = 0f;
-
-    [Tooltip("When enabled, demo paths solve Y from rope length so the bucket stays under the pivot.")]
-    public bool preserveRopeLength = true;
-
-    [Tooltip("When enabled, demo modes use the current elastic rope length. Otherwise they use restLength.")]
-    public bool useElasticLength = true;
-
-    [Tooltip("Optional exponential damping for demo path amplitude.")]
-    [Min(0f)]
-    public float demoDamping = 0f;
-
-    [Tooltip("Draw sampled demo path gizmos in the Scene view.")]
-    public bool drawMotionPathGizmo = true;
-
-    [Tooltip("Number of samples used when drawing demo path gizmos.")]
-    [Min(8)]
-    public int gizmoPathSamples = 120;
-
-    public Color pathGizmoColor = new Color(1f, 0.2f, 0.9f, 0.7f);
+    [Header("3D Physical Motion")]
+    [Tooltip("Hard cap on world velocity for the 3D point-mass bucket.")]
+    [Min(0.1f)]
+    public float maxWorldSpeed = 8f;
 
     [Header("Moving Mass")]
     [Tooltip("Dry bucket mass in kilograms for the custom pendulum model.")]
@@ -125,7 +67,7 @@ public class Pendulum : MonoBehaviour
     [Tooltip("Remaining paint mass inside the bucket in kilograms. Future pouring systems should reduce this value.")]
     public float paintMass = 1f;
 
-    [Tooltip("Linear air resistance coefficient applied to radial and angular custom motion.")]
+    [Tooltip("Linear air resistance coefficient applied to custom motion.")]
     public float airResistance = 0.02f;
 
     [Tooltip("Maximum completed half-swings before motion is stopped. 0 means unlimited.")]
@@ -139,7 +81,7 @@ public class Pendulum : MonoBehaviour
     [Tooltip("Spring stiffness k (Hooke's Law F = -k * x). Higher values make the rope stiffer and stretch less.")]
     public float ropeStiffness = 50f;
 
-    [Tooltip("Damping applied to the radial (stretch) motion. Higher values stop the rope bouncing in/out faster.")]
+    [Tooltip("Damping applied to radial (stretch) motion. Higher values stop the rope bouncing in/out faster.")]
     public float ropeDamping = 0.5f;
 
     [Tooltip("Elasticity factor. Softens the spring (k_eff = stiffness / (1 + elasticity)); higher = more stretch under load.")]
@@ -158,19 +100,19 @@ public class Pendulum : MonoBehaviour
     [Tooltip("Hard cap on radial (stretch) speed, world units per second.")]
     public float maxRadialSpeed = 50f;
 
-    [Tooltip("Hard cap on angular speed, radians per second.")]
+    [Tooltip("Hard cap on angular speed, radians per second, for planar fallback mode.")]
     public float maxAngularSpeed = 50f;
 
     [Header("Debug Drawing")]
-    [Tooltip("Draw anchor, rope, and swing direction gizmos in the Scene view.")]
+    [Tooltip("Draw anchor, rope, and initial push direction gizmos in the Scene view.")]
     public bool drawDebugGizmos = true;
+
+    [Tooltip("Length of the horizontal swing direction gizmo.")]
+    public float debugDirectionLength = 1f;
 
     [Header("Runtime Driving")]
     [Tooltip("Skip this component's Update loop when SimulationManager is driving fixed-step simulation.")]
     public bool useSimulationManagerDriver = true;
-
-    [Tooltip("Length of the horizontal swing direction gizmo.")]
-    public float debugDirectionLength = 1f;
 
     /// <summary>Smallest length the rope is allowed to shrink to. Avoids the 1/r singularity in the angular equation.</summary>
     private const float MinLength = 0.05f;
@@ -178,13 +120,14 @@ public class Pendulum : MonoBehaviour
     /// <summary>Smallest mass used in divisions. Avoids invalid acceleration when values are edited aggressively.</summary>
     private const float MinMovingMass = 0.01f;
 
-    /// <summary>Dead-zone around vertical so numerical jitter does not double-count swings.</summary>
+    /// <summary>Dead-zone around vertical so numerical jitter does not double-count planar swings.</summary>
     private const float SwingCountDeadZoneDegrees = 0.25f;
+
+    /// <summary>World-space projection dead-zone for 3D swing counting.</summary>
+    private const float SwingProjectionDeadZone = 0.01f;
 
     /// <summary>Hard cap on sub-steps per frame so a pathological dt can never spin forever.</summary>
     private const int MaxSubStepsPerFrame = 64;
-
-    private const float MaxDemoHorizontalRopeRatioSqr = 0.95f;
 
     /// <summary>Current angle from vertical, in degrees.</summary>
     public float CurrentAngle => _currentAngleDegrees;
@@ -201,7 +144,7 @@ public class Pendulum : MonoBehaviour
     /// <summary>Total mass moved by the rope: dry bucket plus remaining paint.</summary>
     public float TotalMovingMass => Mathf.Max(MinMovingMass, bucketMass + paintMass);
 
-    /// <summary>Number of completed half-swings across the vertical since the last reset.</summary>
+    /// <summary>Number of completed half-swings across the center since the last reset.</summary>
     public int CompletedSwingCount => _completedSwingCount;
 
     /// <summary>True once swingCountLimit has been reached. A limit of 0 is unlimited.</summary>
@@ -209,7 +152,7 @@ public class Pendulum : MonoBehaviour
 
     /// <summary>
     /// Backward-compatible alias for the old fixed-length field. Reads/writes the rope rest length so
-    /// existing callers (e.g. PendulumPhysicsTestController) keep compiling and behaving sensibly.
+    /// existing callers keep compiling and behaving sensibly.
     /// </summary>
     public float ropeLength
     {
@@ -247,12 +190,14 @@ public class Pendulum : MonoBehaviour
     private float _currentRopeTension;
     private int _completedSwingCount;
     private int _lastSwingSide;
+    private int _lastSwingProjectionSign;
     private bool _hasSwingCounterState;
     private bool _swingLimitReached;
     private Vector3 _previousBucketPosition;
     private bool _hasPreviousBucketPosition;
-    private float _demoTime;
-    private float _demoInitialPhase;
+    private Vector3 _bucketPosition;
+    private Vector3 _bucketVelocity;
+    private Vector3 _initialPullDirection = Vector3.right;
 
     private void Awake()
     {
@@ -297,9 +242,9 @@ public class Pendulum : MonoBehaviour
             return;
         }
 
-        if (_swingLimitReached && UsesPhysicalPendulumIntegration())
+        if (_swingLimitReached)
         {
-            BucketVelocity = Vector3.zero;
+            StopActiveMotion();
             return;
         }
 
@@ -320,18 +265,21 @@ public class Pendulum : MonoBehaviour
             _hasPreviousBucketPosition = true;
         }
 
-        if (UsesPhysicalPendulumIntegration())
+        if (motionMode == MotionMode.Physical3DPendulum)
         {
-            IntegrateElasticPendulum(dt);
+            EnsureWorldStateFromTransform();
+            IntegrateWorldPendulum(dt);
+            ApplyBucketPosition();
+            BucketVelocity = _bucketVelocity;
+            _previousBucketPosition = bucketTransform.position;
+            _hasPreviousBucketPosition = true;
         }
         else
         {
-            StepDemoRopeLength(dt);
-            _demoTime += dt * pathSpeed;
+            IntegrateElasticPendulum(dt);
+            ApplyBucketPosition();
+            UpdateBucketVelocity(dt);
         }
-
-        ApplyBucketPosition();
-        UpdateBucketVelocity(dt);
     }
 
     /// <summary>
@@ -344,8 +292,6 @@ public class Pendulum : MonoBehaviour
         _currentAngleDegrees = angleDegrees;
         _currentAngularVelocity = angularVelocityDegrees;
 
-        // Static equilibrium extension: at rest the spring balances gravity along the rope,
-        // k_eff * x / m = g * cos(theta)  =>  x = m * g * cos(theta) / k_eff.
         float kEff = EffectiveStiffness();
         float movingMass = TotalMovingMass;
         float gravityAlongRope = gravity * Mathf.Cos(angleDegrees * Mathf.Deg2Rad);
@@ -359,8 +305,12 @@ public class Pendulum : MonoBehaviour
         _lastSwingSide = SignWithDeadZone(_currentAngleDegrees);
         _hasSwingCounterState = _lastSwingSide != 0;
         _swingLimitReached = false;
-        _demoTime = 0f;
-        _demoInitialPhase = pathPhase * Mathf.Deg2Rad;
+        swingDirectionDegrees = directionAngleDegrees;
+
+        if (motionMode == MotionMode.Physical3DPendulum)
+        {
+            InitializeWorldState(angleDegrees, angularVelocityDegrees);
+        }
 
         ApplyBucketPosition();
         ResetBucketVelocityTracking();
@@ -379,13 +329,221 @@ public class Pendulum : MonoBehaviour
     /// </summary>
     public Vector3 GetBucketPosition()
     {
-        return bucketTransform != null ? bucketTransform.position : Vector3.zero;
+        return bucketTransform != null ? bucketTransform.position : _bucketPosition;
     }
 
     /// <summary>Spring stiffness after elasticity softening. Elasticity makes the rope stretch more.</summary>
     private float EffectiveStiffness()
     {
         return ropeStiffness / (1f + Mathf.Max(0f, ropeElasticity));
+    }
+
+    private void InitializeWorldState(float angleDegrees, float angularVelocityDegrees)
+    {
+        Vector3 anchorPosition = anchorTransform != null ? anchorTransform.position : transform.position;
+        Vector3 pullDirection = GetHorizontalDirection(directionAngleDegrees);
+        float angleRadians = angleDegrees * Mathf.Deg2Rad;
+
+        Vector3 ropeOffset = Vector3.down * (_currentLength * Mathf.Cos(angleRadians)) +
+                             pullDirection * (_currentLength * Mathf.Sin(angleRadians));
+        if (ropeOffset.sqrMagnitude <= 0.000001f)
+        {
+            ropeOffset = Vector3.down * Mathf.Max(MinLength, _currentLength);
+        }
+
+        _bucketPosition = anchorPosition + ropeOffset;
+        Vector3 ropeDirection = ropeOffset.normalized;
+
+        Vector3 forwardTangent = ProjectOntoPlane(
+            pullDirection * Mathf.Cos(angleRadians) + Vector3.up * Mathf.Sin(angleRadians),
+            ropeDirection
+        );
+        forwardTangent = SafeNormalized(forwardTangent, ProjectOntoPlane(pullDirection, ropeDirection));
+
+        Vector3 lateralTangent = ProjectOntoPlane(GetHorizontalLateralDirection(pullDirection), ropeDirection);
+        lateralTangent = SafeNormalized(lateralTangent, Vector3.Cross(Vector3.up, ropeDirection));
+
+        float forwardSpeed = angularVelocityDegrees * Mathf.Deg2Rad * _currentLength;
+        float lateralSpeed = initialLateralAngularVelocityDegrees * Mathf.Deg2Rad * _currentLength;
+        _bucketVelocity = forwardTangent * forwardSpeed + lateralTangent * lateralSpeed;
+
+        if (_bucketVelocity.magnitude > maxWorldSpeed)
+        {
+            _bucketVelocity = _bucketVelocity.normalized * maxWorldSpeed;
+        }
+
+        Vector3 horizontalOffset = Vector3.ProjectOnPlane(ropeOffset, Vector3.up);
+        Vector3 horizontalVelocity = Vector3.ProjectOnPlane(_bucketVelocity, Vector3.up);
+        _initialPullDirection = horizontalOffset.sqrMagnitude > SwingProjectionDeadZone * SwingProjectionDeadZone
+            ? horizontalOffset.normalized
+            : SafeNormalized(horizontalVelocity, pullDirection);
+        _lastSwingProjectionSign = SignWithDeadZone(Vector3.Dot(horizontalOffset, _initialPullDirection), SwingProjectionDeadZone);
+        _hasSwingCounterState = _lastSwingProjectionSign != 0;
+
+        UpdateWorldDerivedState();
+    }
+
+    private void EnsureWorldStateFromTransform()
+    {
+        if (_bucketPosition.sqrMagnitude > 0.000001f)
+        {
+            return;
+        }
+
+        _bucketPosition = bucketTransform != null ? bucketTransform.position : GetAnchorPosition() + Vector3.down * restLength;
+        _bucketVelocity = Vector3.zero;
+        _initialPullDirection = GetHorizontalDirection(directionAngleDegrees);
+        UpdateWorldDerivedState();
+    }
+
+    private void IntegrateWorldPendulum(float deltaTime)
+    {
+        if (restLength <= 0f)
+        {
+            return;
+        }
+
+        float remaining = Mathf.Min(deltaTime, maxFrameTime);
+        float step = Mathf.Max(0.0005f, maxSubStep);
+
+        int guard = 0;
+        while (remaining > 0f && guard++ < MaxSubStepsPerFrame && !_swingLimitReached)
+        {
+            float h = Mathf.Min(remaining, step);
+            IntegrateWorldStep(h);
+            remaining -= h;
+        }
+    }
+
+    private void IntegrateWorldStep(float h)
+    {
+        Vector3 previousPosition = _bucketPosition;
+        Vector3 anchorPosition = GetAnchorPosition();
+        Vector3 offset = _bucketPosition - anchorPosition;
+        float length = offset.magnitude;
+
+        if (length <= MinLength)
+        {
+            length = MinLength;
+            offset = Vector3.down * length;
+            _bucketPosition = anchorPosition + offset;
+        }
+
+        Vector3 ropeDirection = offset / length;
+        float kEff = EffectiveStiffness();
+        float movingMass = TotalMovingMass;
+        float extension = length - restLength;
+        float springTension = extension > 0f ? kEff * extension : 0f;
+        float radialSpeed = Vector3.Dot(_bucketVelocity, ropeDirection);
+
+        Vector3 radialVelocity = ropeDirection * radialSpeed;
+        Vector3 tangentialVelocity = _bucketVelocity - radialVelocity;
+        Vector3 acceleration = Vector3.down * gravity;
+
+        acceleration += -ropeDirection * (springTension / movingMass);
+        acceleration += -ropeDirection * (ropeDamping * radialSpeed / movingMass);
+        acceleration += -tangentialVelocity * Mathf.Max(0f, damping);
+        acceleration += -_bucketVelocity * (airResistance / movingMass);
+
+        _bucketVelocity += acceleration * h;
+        if (_bucketVelocity.magnitude > maxWorldSpeed)
+        {
+            _bucketVelocity = _bucketVelocity.normalized * maxWorldSpeed;
+        }
+
+        _bucketPosition += _bucketVelocity * h;
+        EnforceWorldRopeLimits(anchorPosition);
+        UpdateWorldDerivedState();
+        Update3DSwingCounter(previousPosition, _bucketPosition);
+    }
+
+    private void EnforceWorldRopeLimits(Vector3 anchorPosition)
+    {
+        Vector3 offset = _bucketPosition - anchorPosition;
+        float length = offset.magnitude;
+
+        if (length <= 0.000001f)
+        {
+            offset = Vector3.down * MinLength;
+            length = MinLength;
+        }
+
+        Vector3 ropeDirection = offset / length;
+        float maxLen = restLength * Mathf.Max(1f, maxStretchMultiplier);
+        float clampedLength = Mathf.Clamp(length, MinLength, maxLen);
+
+        if (!Mathf.Approximately(clampedLength, length))
+        {
+            float radialSpeed = Vector3.Dot(_bucketVelocity, ropeDirection);
+            _bucketPosition = anchorPosition + ropeDirection * clampedLength;
+
+            if ((length > maxLen && radialSpeed > 0f) || (length < MinLength && radialSpeed < 0f))
+            {
+                _bucketVelocity -= ropeDirection * radialSpeed;
+            }
+        }
+    }
+
+    private void UpdateWorldDerivedState()
+    {
+        Vector3 anchorPosition = GetAnchorPosition();
+        Vector3 offset = _bucketPosition - anchorPosition;
+        float length = Mathf.Max(MinLength, offset.magnitude);
+        Vector3 ropeDirection = offset.sqrMagnitude > 0.000001f ? offset / length : Vector3.down;
+        float extension = Mathf.Max(0f, length - restLength);
+        Vector3 radialVelocity = ropeDirection * Vector3.Dot(_bucketVelocity, ropeDirection);
+        Vector3 tangentialVelocity = _bucketVelocity - radialVelocity;
+
+        _currentLength = length;
+        _lengthVelocity = Vector3.Dot(_bucketVelocity, ropeDirection);
+        _currentRopeTension = EffectiveStiffness() * extension;
+        _currentAngleDegrees = Vector3.Angle(Vector3.down, ropeDirection);
+        _currentAngularVelocity = tangentialVelocity.magnitude / length * Mathf.Rad2Deg;
+        _maxRopeExtension = Mathf.Max(_maxRopeExtension, extension);
+    }
+
+    private void Update3DSwingCounter(Vector3 previousPosition, Vector3 currentPosition)
+    {
+        if (swingCountLimit <= 0 || _swingLimitReached)
+        {
+            return;
+        }
+
+        int currentSide = SignWithDeadZone(GetSwingProjection(currentPosition), SwingProjectionDeadZone);
+        if (currentSide == 0)
+        {
+            return;
+        }
+
+        if (!_hasSwingCounterState)
+        {
+            int previousSide = SignWithDeadZone(GetSwingProjection(previousPosition), SwingProjectionDeadZone);
+            _lastSwingProjectionSign = previousSide != 0 ? previousSide : currentSide;
+            _hasSwingCounterState = true;
+            return;
+        }
+
+        if (currentSide == _lastSwingProjectionSign)
+        {
+            return;
+        }
+
+        _lastSwingProjectionSign = currentSide;
+        _completedSwingCount++;
+
+        if (_completedSwingCount >= swingCountLimit)
+        {
+            _bucketVelocity = Vector3.zero;
+            BucketVelocity = Vector3.zero;
+            _swingLimitReached = true;
+        }
+    }
+
+    private float GetSwingProjection(Vector3 position)
+    {
+        Vector3 offset = position - GetAnchorPosition();
+        Vector3 horizontalOffset = Vector3.ProjectOnPlane(offset, Vector3.up);
+        return Vector3.Dot(horizontalOffset, _initialPullDirection);
     }
 
     private void IntegrateElasticPendulum(float deltaTime)
@@ -395,9 +553,6 @@ public class Pendulum : MonoBehaviour
             return;
         }
 
-        // Clamp the incoming frame time so a hitch or a long pause cannot inject a huge dt that
-        // would blow up the stiff spring, then split it into small fixed sub-steps. Sub-stepping
-        // gives FixedUpdate-grade stability while preserving the existing Update + TimeScale path.
         float remaining = Mathf.Min(deltaTime, maxFrameTime);
         float step = Mathf.Max(0.0005f, maxSubStep);
 
@@ -405,17 +560,15 @@ public class Pendulum : MonoBehaviour
         while (remaining > 0f && guard++ < MaxSubStepsPerFrame && !_swingLimitReached)
         {
             float h = Mathf.Min(remaining, step);
-            IntegrateStep(h);
+            IntegratePlanarStep(h);
             remaining -= h;
         }
     }
 
     /// <summary>
-    /// Advances the (r, theta) state by one sub-step using symplectic (semi-implicit) Euler.
-    /// Velocities are updated from the current-position accelerations first, then positions are
-    /// updated from the new velocities. This is energy-stable for oscillators, unlike explicit Euler.
+    /// Advances the planar fallback (r, theta) state by one sub-step using symplectic Euler.
     /// </summary>
-    private void IntegrateStep(float h)
+    private void IntegratePlanarStep(float h)
     {
         float theta = _currentAngleDegrees * Mathf.Deg2Rad;
         float thetaDot = _currentAngularVelocity * Mathf.Deg2Rad;
@@ -426,35 +579,29 @@ public class Pendulum : MonoBehaviour
         float movingMass = TotalMovingMass;
         float extension = r - restLength;
 
-        // Hooke's Law: a rope only pulls (inward), it never pushes. No force while slack (x <= 0).
         float springTension = extension > 0f ? kEff * extension : 0f;
         float springAccel = springTension / movingMass;
         float radialDampingAccel = (ropeDamping + airResistance) * rDot / movingMass;
 
-        // Radial equation of motion: centrifugal + gravity-along-rope - spring - custom damping.
         float radialAccel = r * thetaDot * thetaDot
                             + gravity * Mathf.Cos(theta)
                             - springAccel
                             - radialDampingAccel;
 
-        // Angular equation of motion. Guard the 1/r term against a near-zero length.
         float safeR = Mathf.Max(r, MinLength);
         float angularAccel = (-gravity * Mathf.Sin(theta) - 2f * rDot * thetaDot) / safeR
                             - damping * thetaDot
                             - (airResistance * thetaDot / movingMass);
 
-        // Symplectic Euler: integrate velocities, then positions.
         rDot += radialAccel * h;
         thetaDot += angularAccel * h;
 
-        // Clamp velocities so a transient spike cannot run away between sub-steps.
         rDot = Mathf.Clamp(rDot, -maxRadialSpeed, maxRadialSpeed);
         thetaDot = Mathf.Clamp(thetaDot, -maxAngularSpeed, maxAngularSpeed);
 
         r += rDot * h;
         theta += thetaDot * h;
 
-        // Hard length clamp with anti-windup: if we hit a bound, kill the velocity pushing past it.
         float maxLen = restLength * Mathf.Max(1f, maxStretchMultiplier);
         if (r > maxLen)
         {
@@ -467,7 +614,6 @@ public class Pendulum : MonoBehaviour
             if (rDot < 0f) rDot = 0f;
         }
 
-        // Keep theta in [-pi, pi] for numerical cleanliness and stable debug readouts.
         theta = Mathf.Repeat(theta + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
 
         float previousAngleDegrees = _currentAngleDegrees;
@@ -477,7 +623,7 @@ public class Pendulum : MonoBehaviour
         _lengthVelocity = rDot;
         _currentRopeTension = EffectiveStiffness() * Mathf.Max(0f, _currentLength - restLength);
 
-        UpdateSwingCounter(previousAngleDegrees, _currentAngleDegrees);
+        UpdatePlanarSwingCounter(previousAngleDegrees, _currentAngleDegrees);
 
         float positiveExtension = Mathf.Max(0f, r - restLength);
         if (positiveExtension > _maxRopeExtension)
@@ -486,7 +632,7 @@ public class Pendulum : MonoBehaviour
         }
     }
 
-    private void UpdateSwingCounter(float previousAngleDegrees, float currentAngleDegrees)
+    private void UpdatePlanarSwingCounter(float previousAngleDegrees, float currentAngleDegrees)
     {
         if (swingCountLimit <= 0 || _swingLimitReached)
         {
@@ -517,36 +663,9 @@ public class Pendulum : MonoBehaviour
 
         if (_completedSwingCount >= swingCountLimit)
         {
-            _currentAngularVelocity = 0f;
-            _lengthVelocity = 0f;
-            BucketVelocity = Vector3.zero;
+            StopActiveMotion();
             _swingLimitReached = true;
         }
-    }
-
-    private static int SignWithDeadZone(float angleDegrees)
-    {
-        if (angleDegrees > SwingCountDeadZoneDegrees)
-        {
-            return 1;
-        }
-
-        if (angleDegrees < -SwingCountDeadZoneDegrees)
-        {
-            return -1;
-        }
-
-        return 0;
-    }
-
-    private bool UsesPhysicalPendulumIntegration()
-    {
-        return motionMode == MotionMode.PlanarPendulum || motionMode == MotionMode.DiagonalPendulum;
-    }
-
-    private bool IsDemoMotionMode()
-    {
-        return motionMode == MotionMode.EllipseDemo || motionMode == MotionMode.FigureEightDemo;
     }
 
     private void ApplyBucketPosition()
@@ -556,180 +675,26 @@ public class Pendulum : MonoBehaviour
             return;
         }
 
-        switch (motionMode)
+        if (motionMode == MotionMode.Physical3DPendulum)
         {
-            case MotionMode.DiagonalPendulum:
-                ApplyPendulumPosition(swingDirectionDegrees);
-                break;
-            case MotionMode.EllipseDemo:
-            case MotionMode.FigureEightDemo:
-                ApplyDemoPathPosition(motionMode);
-                break;
-            case MotionMode.PlanarPendulum:
-            default:
-                ApplyPendulumPosition(directionAngleDegrees);
-                break;
+            bucketTransform.position = _bucketPosition;
+            return;
         }
+
+        ApplyPlanarPendulumPosition(directionAngleDegrees);
     }
 
-    private void ApplyPendulumPosition(float swingDirectionDegreesValue)
+    private void ApplyPlanarPendulumPosition(float directionDegrees)
     {
         float angleRadians = _currentAngleDegrees * Mathf.Deg2Rad;
-        float directionRadians = swingDirectionDegreesValue * Mathf.Deg2Rad;
+        float directionRadians = directionDegrees * Mathf.Deg2Rad;
         float r = _currentLength;
 
         float x = anchorTransform.position.x + r * Mathf.Sin(angleRadians) * Mathf.Cos(directionRadians);
         float y = anchorTransform.position.y - r * Mathf.Cos(angleRadians);
         float z = anchorTransform.position.z + r * Mathf.Sin(angleRadians) * Mathf.Sin(directionRadians);
 
-        // Move the bucket visually by assigning its Transform directly every frame.
-        // This is custom motion only; no Rigidbody or Collider is involved.
         bucketTransform.position = new Vector3(x, y, z);
-    }
-
-    private void ApplyDemoPathPosition(MotionMode mode)
-    {
-        float length = GetDemoRopeLength();
-        float phase = _demoTime + _demoInitialPhase;
-        float dampingScale = GetDemoDampingScale();
-        Vector3 localOffset = CalculateDemoLocalOffset(mode, phase, length, dampingScale);
-        Vector3 worldOffset = RotateHorizontal(localOffset, swingDirectionDegrees);
-
-        bucketTransform.position = anchorTransform.position + worldOffset;
-    }
-
-    private void StepDemoRopeLength(float deltaTime)
-    {
-        if (!useElasticLength)
-        {
-            _currentLength = Mathf.Max(MinLength, restLength);
-            _lengthVelocity = 0f;
-            _currentRopeTension = 0f;
-            return;
-        }
-
-        float remaining = Mathf.Min(deltaTime, maxFrameTime);
-        float step = Mathf.Max(0.0005f, maxSubStep);
-        int guard = 0;
-
-        while (remaining > 0f && guard++ < MaxSubStepsPerFrame)
-        {
-            float h = Mathf.Min(remaining, step);
-            IntegrateDemoLengthStep(h);
-            remaining -= h;
-        }
-    }
-
-    private void IntegrateDemoLengthStep(float h)
-    {
-        float kEff = EffectiveStiffness();
-        float movingMass = TotalMovingMass;
-        float extension = _currentLength - restLength;
-        float springTension = extension > 0f ? kEff * extension : 0f;
-        float springAccel = springTension / movingMass;
-        float radialDampingAccel = (ropeDamping + airResistance) * _lengthVelocity / movingMass;
-        float radialAccel = gravity - springAccel - radialDampingAccel;
-
-        _lengthVelocity += radialAccel * h;
-        _lengthVelocity = Mathf.Clamp(_lengthVelocity, -maxRadialSpeed, maxRadialSpeed);
-        _currentLength += _lengthVelocity * h;
-
-        float maxLen = restLength * Mathf.Max(1f, maxStretchMultiplier);
-        if (_currentLength > maxLen)
-        {
-            _currentLength = maxLen;
-            if (_lengthVelocity > 0f)
-            {
-                _lengthVelocity = 0f;
-            }
-        }
-        else if (_currentLength < MinLength)
-        {
-            _currentLength = MinLength;
-            if (_lengthVelocity < 0f)
-            {
-                _lengthVelocity = 0f;
-            }
-        }
-
-        _currentRopeTension = EffectiveStiffness() * Mathf.Max(0f, _currentLength - restLength);
-        _maxRopeExtension = Mathf.Max(_maxRopeExtension, Mathf.Max(0f, _currentLength - restLength));
-    }
-
-    private float GetDemoRopeLength()
-    {
-        float length = useElasticLength ? _currentLength : restLength;
-        return Mathf.Max(MinLength, length);
-    }
-
-    private float GetDemoDampingScale()
-    {
-        if (demoDamping <= 0f || pathSpeed <= 0f)
-        {
-            return 1f;
-        }
-
-        float elapsedSeconds = _demoTime / pathSpeed;
-        return Mathf.Exp(-demoDamping * Mathf.Max(0f, elapsedSeconds));
-    }
-
-    private Vector3 CalculateDemoLocalOffset(MotionMode mode, float phase, float length, float dampingScale)
-    {
-        float x;
-        float z;
-
-        switch (mode)
-        {
-            case MotionMode.FigureEightDemo:
-                x = pathAmplitudeX * Mathf.Sin(phase);
-                z = pathAmplitudeZ * Mathf.Sin(phase * 2f) * 0.5f;
-                break;
-            case MotionMode.EllipseDemo:
-            default:
-                x = pathAmplitudeX * Mathf.Sin(phase);
-                z = pathAmplitudeZ * Mathf.Cos(phase);
-                break;
-        }
-
-        x *= dampingScale;
-        z *= dampingScale;
-
-        Vector2 horizontal = ClampDemoHorizontalOffset(new Vector2(x, z), length);
-        float y = -length;
-
-        if (preserveRopeLength)
-        {
-            float safeVerticalSqr = Mathf.Max(MinLength * MinLength, length * length - horizontal.sqrMagnitude);
-            y = -Mathf.Sqrt(safeVerticalSqr);
-        }
-
-        return new Vector3(horizontal.x, y, horizontal.y);
-    }
-
-    private static Vector2 ClampDemoHorizontalOffset(Vector2 horizontal, float length)
-    {
-        float maxHorizontalSqr = Mathf.Max(0f, length * length * MaxDemoHorizontalRopeRatioSqr);
-        float horizontalSqr = horizontal.sqrMagnitude;
-
-        if (horizontalSqr <= maxHorizontalSqr || horizontalSqr <= Mathf.Epsilon)
-        {
-            return horizontal;
-        }
-
-        return horizontal * Mathf.Sqrt(maxHorizontalSqr / horizontalSqr);
-    }
-
-    private static Vector3 RotateHorizontal(Vector3 localOffset, float yawDegrees)
-    {
-        float yawRadians = yawDegrees * Mathf.Deg2Rad;
-        float cos = Mathf.Cos(yawRadians);
-        float sin = Mathf.Sin(yawRadians);
-
-        return new Vector3(
-            localOffset.x * cos - localOffset.z * sin,
-            localOffset.y,
-            localOffset.x * sin + localOffset.z * cos
-        );
     }
 
     private void UpdateBucketVelocity(float dt)
@@ -753,6 +718,77 @@ public class Pendulum : MonoBehaviour
         _hasPreviousBucketPosition = true;
     }
 
+    private void StopActiveMotion()
+    {
+        _bucketVelocity = Vector3.zero;
+        _currentAngularVelocity = 0f;
+        _lengthVelocity = 0f;
+        BucketVelocity = Vector3.zero;
+    }
+
+    private Vector3 GetAnchorPosition()
+    {
+        return anchorTransform != null ? anchorTransform.position : transform.position;
+    }
+
+    private static Vector3 GetHorizontalDirection(float yawDegrees)
+    {
+        float yawRadians = yawDegrees * Mathf.Deg2Rad;
+        Vector3 direction = new Vector3(Mathf.Cos(yawRadians), 0f, Mathf.Sin(yawRadians));
+        return direction.sqrMagnitude > 0.000001f ? direction.normalized : Vector3.right;
+    }
+
+    private static Vector3 GetHorizontalLateralDirection(Vector3 pullDirection)
+    {
+        Vector3 lateral = Vector3.Cross(Vector3.up, pullDirection);
+        return lateral.sqrMagnitude > 0.000001f ? lateral.normalized : Vector3.forward;
+    }
+
+    private static Vector3 SafeNormalized(Vector3 vector, Vector3 fallback)
+    {
+        if (vector.sqrMagnitude > 0.000001f)
+        {
+            return vector.normalized;
+        }
+
+        if (fallback.sqrMagnitude > 0.000001f)
+        {
+            return fallback.normalized;
+        }
+
+        return Vector3.right;
+    }
+
+    private static Vector3 ProjectOntoPlane(Vector3 vector, Vector3 planeNormal)
+    {
+        if (planeNormal.sqrMagnitude <= 0.000001f)
+        {
+            return vector;
+        }
+
+        return Vector3.ProjectOnPlane(vector, planeNormal.normalized);
+    }
+
+    private static int SignWithDeadZone(float angleDegrees)
+    {
+        return SignWithDeadZone(angleDegrees, SwingCountDeadZoneDegrees);
+    }
+
+    private static int SignWithDeadZone(float value, float deadZone)
+    {
+        if (value > deadZone)
+        {
+            return 1;
+        }
+
+        if (value < -deadZone)
+        {
+            return -1;
+        }
+
+        return 0;
+    }
+
     private void OnValidate()
     {
         restLength = Mathf.Max(0.01f, restLength);
@@ -771,12 +807,7 @@ public class Pendulum : MonoBehaviour
         maxStretchMultiplier = Mathf.Max(1f, maxStretchMultiplier);
         maxRadialSpeed = Mathf.Max(0.1f, maxRadialSpeed);
         maxAngularSpeed = Mathf.Max(0.1f, maxAngularSpeed);
-
-        pathAmplitudeX = Mathf.Max(0f, pathAmplitudeX);
-        pathAmplitudeZ = Mathf.Max(0f, pathAmplitudeZ);
-        pathSpeed = Mathf.Max(0f, pathSpeed);
-        demoDamping = Mathf.Max(0f, demoDamping);
-        gizmoPathSamples = Mathf.Max(8, gizmoPathSamples);
+        maxWorldSpeed = Mathf.Max(0.1f, maxWorldSpeed);
         debugDirectionLength = Mathf.Max(0f, debugDirectionLength);
     }
 
@@ -789,26 +820,24 @@ public class Pendulum : MonoBehaviour
 
         Transform anchor = anchorTransform != null ? anchorTransform : transform;
         Vector3 anchorPosition = anchor.position;
+        Vector3 pullDirection = GetHorizontalDirection(directionAngleDegrees);
+        Vector3 lateralDirection = GetHorizontalLateralDirection(pullDirection);
 
         Gizmos.color = Color.yellow;
         Gizmos.DrawSphere(anchorPosition, 0.08f);
 
-        float directionDegrees = motionMode == MotionMode.PlanarPendulum
-            ? directionAngleDegrees
-            : swingDirectionDegrees;
-        float directionRadians = directionDegrees * Mathf.Deg2Rad;
-        Vector3 swingDirection = new Vector3(
-            Mathf.Cos(directionRadians),
-            0f,
-            Mathf.Sin(directionRadians)
-        );
-
         Gizmos.color = Color.cyan;
-        Gizmos.DrawLine(anchorPosition, anchorPosition + swingDirection * debugDirectionLength);
+        Gizmos.DrawLine(anchorPosition, anchorPosition + pullDirection * debugDirectionLength);
+
+        if (Mathf.Abs(initialLateralAngularVelocityDegrees) > 0.001f)
+        {
+            Gizmos.color = new Color(1f, 0.2f, 0.9f, 1f);
+            float lateralSign = Mathf.Sign(initialLateralAngularVelocityDegrees);
+            Gizmos.DrawLine(anchorPosition, anchorPosition + lateralDirection * lateralSign * debugDirectionLength * 0.75f);
+        }
 
         if (bucketTransform != null)
         {
-            // Tint the rope red as it stretches beyond rest length so extension is visible in the Scene view.
             float extensionRatio = restLength > 0f
                 ? Mathf.Clamp01((bucketTransform.position - anchorPosition).magnitude / restLength - 1f)
                 : 0f;
@@ -817,38 +846,6 @@ public class Pendulum : MonoBehaviour
 
             Gizmos.color = Color.green;
             Gizmos.DrawWireSphere(bucketTransform.position, 0.12f);
-        }
-
-        if (drawMotionPathGizmo && IsDemoMotionMode())
-        {
-            DrawDemoPathGizmo(anchorPosition);
-        }
-    }
-
-    private void DrawDemoPathGizmo(Vector3 anchorPosition)
-    {
-        int sampleCount = Mathf.Max(8, gizmoPathSamples);
-        float length = Application.isPlaying ? GetDemoRopeLength() : Mathf.Max(MinLength, restLength);
-        float phaseOffset = Application.isPlaying ? _demoInitialPhase : pathPhase * Mathf.Deg2Rad;
-        Vector3 previous = Vector3.zero;
-        bool hasPrevious = false;
-
-        Gizmos.color = pathGizmoColor;
-
-        for (int i = 0; i <= sampleCount; i++)
-        {
-            float t = i / (float)sampleCount;
-            float phase = phaseOffset + t * Mathf.PI * 2f;
-            Vector3 localOffset = CalculateDemoLocalOffset(motionMode, phase, length, 1f);
-            Vector3 worldPoint = anchorPosition + RotateHorizontal(localOffset, swingDirectionDegrees);
-
-            if (hasPrevious)
-            {
-                Gizmos.DrawLine(previous, worldPoint);
-            }
-
-            previous = worldPoint;
-            hasPrevious = true;
         }
     }
 }
