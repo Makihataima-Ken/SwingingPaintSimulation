@@ -74,10 +74,30 @@ public class RopeRenderer : MonoBehaviour
             return;
         }
 
-        // Draw the rope visually by connecting the anchor and bucket positions.
-        // The bucket position already reflects stretch/contraction, so the line length follows it.
-        _lineRenderer.SetPosition(0, anchorTransform.position);
-        _lineRenderer.SetPosition(1, bucketTransform.position);
+        if (pendulum != null && pendulum.RopePointCount > 1)
+        {
+            int pointCount = pendulum.RopePointCount;
+            if (_lineRenderer.positionCount != pointCount)
+            {
+                _lineRenderer.positionCount = pointCount;
+            }
+
+            for (int i = 0; i < pointCount; i++)
+            {
+                _lineRenderer.SetPosition(i, pendulum.GetRopePoint(i));
+            }
+        }
+        else
+        {
+            // Fallback for edit mode or scenes that still use only anchor/bucket transforms.
+            if (_lineRenderer.positionCount != 2)
+            {
+                _lineRenderer.positionCount = 2;
+            }
+
+            _lineRenderer.SetPosition(0, anchorTransform.position);
+            _lineRenderer.SetPosition(1, bucketTransform.position);
+        }
 
         ApplyStretchFeedback();
     }

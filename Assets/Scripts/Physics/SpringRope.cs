@@ -118,6 +118,26 @@ namespace SwingingPaint.Physics
             _particles[0] = p;
         }
 
+        /// <summary>
+        /// Moves the final rope particle. When pinned is true it behaves like a kinematic grab point;
+        /// when false it is released back to the spring simulation with the supplied velocity.
+        /// </summary>
+        public void SetEnd(Vector3 position, Vector3 velocity, bool pinned)
+        {
+            if (_particles.Count == 0)
+            {
+                return;
+            }
+
+            int index = _particles.Count - 1;
+            var p = _particles[index];
+            p.Position = position;
+            p.PrevPosition = position;
+            p.Velocity = velocity;
+            p.InvMass = pinned ? 0f : 1f / Mathf.Max(1e-4f, p.Mass);
+            _particles[index] = p;
+        }
+
         /// <summary>Advances the rope by dt, split into substeps for stiff-spring stability.</summary>
         public void Step(float dt, int substeps)
         {
