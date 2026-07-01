@@ -65,7 +65,7 @@ namespace SwingingPaint.BucketFluid
         // Internal friction. Higher viscosity makes paint syrupy and slow to shear; lower
         // viscosity makes it splash and slosh more like water.
         [Tooltip("Internal fluid friction; higher values make paint thicker.")]
-        public float viscosity = 0.45f;
+        public float viscosity = 1.2f;
 
         // Surface smoothing force. Higher values keep the visible liquid surface rounded and
         // resistant to tiny ripples.
@@ -125,7 +125,7 @@ namespace SwingingPaint.BucketFluid
         [Header("Fluid Fill")]
         [Tooltip("Initial local-space fill height as a fraction of the bucket interior.")]
         [Range(0.01f, 1f)]
-        public float fillHeightPercent = 0.55f;
+        public float fillHeightPercent = 0.85f;
 
         // Small deterministic spawn offset as a fraction of particle spacing. This breaks up
         // visible perfect rows while keeping the initial mass safely inside the bucket.

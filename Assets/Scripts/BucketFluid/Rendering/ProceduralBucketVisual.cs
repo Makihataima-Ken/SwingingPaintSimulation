@@ -21,6 +21,7 @@ namespace SwingingPaint.BucketFluid.Rendering
 
         private Mesh _mesh;
         private Material _material;
+        private bool _rebuildQueued;
 
         private void OnEnable()
         {
@@ -31,8 +32,37 @@ namespace SwingingPaint.BucketFluid.Rendering
         {
             segments = Mathf.Max(12, segments);
             wallThickness = Mathf.Max(0.001f, wallThickness);
+            QueueRebuild();
+        }
+
+        private void QueueRebuild()
+        {
+#if UNITY_EDITOR
+            if (_rebuildQueued)
+            {
+                return;
+            }
+
+            _rebuildQueued = true;
+            UnityEditor.EditorApplication.delayCall += RebuildAfterValidation;
+            return;
+#endif
+
             Rebuild();
         }
+
+#if UNITY_EDITOR
+        private void RebuildAfterValidation()
+        {
+            if (this == null)
+            {
+                return;
+            }
+
+            _rebuildQueued = false;
+            Rebuild();
+        }
+#endif
 
         public void Rebuild()
         {

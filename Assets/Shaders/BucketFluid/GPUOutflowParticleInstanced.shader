@@ -3,6 +3,7 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowParticleInstanced"
     Properties
     {
         _ParticleSize ("Particle Size", Float) = 0.045
+        _ParticleOpacityMultiplier ("Particle Opacity Multiplier", Float) = 0.95
     }
 
     SubShader
@@ -52,8 +53,10 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowParticleInstanced"
 
             StructuredBuffer<OutflowParticle> _OutflowParticles;
             float _ParticleSize;
+            float _ParticleOpacityMultiplier;
             float3 _CameraRight;
             float3 _CameraUp;
+            float3 _CameraForward;
 
             struct appdata
             {
@@ -73,11 +76,32 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowParticleInstanced"
                 OutflowParticle particle = _OutflowParticles[input.instanceID];
                 float active = particle.active != 0 ? 1.0 : 0.0;
                 float speed = length(particle.velocityWorld);
-                float stretch = lerp(1.0, 2.6, saturate(speed / 10.0));
+                float stretch = lerp(1.15, 3.3, saturate(speed / 10.0));
                 float visualSize = max(_ParticleSize, particle.radius * 2.0);
+                float3 longAxis = particle.velocityWorld - _CameraForward * dot(particle.velocityWorld, _CameraForward);
+
+                if (dot(longAxis, longAxis) < 0.00001)
+                {
+                    longAxis = _CameraUp;
+                }
+                else
+                {
+                    longAxis = normalize(longAxis);
+                }
+
+                float3 sideAxis = cross(_CameraForward, longAxis);
+                if (dot(sideAxis, sideAxis) < 0.00001)
+                {
+                    sideAxis = _CameraRight;
+                }
+                else
+                {
+                    sideAxis = normalize(sideAxis);
+                }
+
                 float3 offset =
-                    _CameraRight * input.vertex.x * visualSize +
-                    _CameraUp * input.vertex.y * visualSize * stretch;
+                    sideAxis * input.vertex.x * visualSize +
+                    longAxis * input.vertex.y * visualSize * stretch;
                 float3 worldPosition = particle.positionWorld + offset * active;
 
                 if (active < 0.5)
@@ -86,7 +110,7 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowParticleInstanced"
                 }
 
                 output.vertex = UnityWorldToClipPos(worldPosition);
-                output.color = fixed4(particle.color.rgb, particle.color.a * particle.wetness * active);
+                output.color = fixed4(particle.color.rgb, saturate(particle.color.a * particle.wetness * _ParticleOpacityMultiplier) * active);
                 return output;
             }
 

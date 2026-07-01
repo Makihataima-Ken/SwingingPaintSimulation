@@ -70,13 +70,16 @@ namespace SwingingPaint.Core
 
         [Header("Paint Properties")]
         [Tooltip("Rate at which paint flows from the bucket (units per second).")]
-        [SerializeField] private float paintFlowRate = 1.0f;
+        [SerializeField] private float paintFlowRate = 0.5f;
 
         [Tooltip("Viscosity of the paint. Higher values cause the paint to spread less.")]
-        [SerializeField] private float paintViscosity = 0.5f;
+        [SerializeField] private float paintViscosity = 1.2f;
 
         [Tooltip("Total quantity of paint available in the bucket.")]
         [SerializeField] private float paintQuantity = 100f;
+
+        [Tooltip("Current paint color used by bucket fluid, falling stream, and deposited paint.")]
+        [SerializeField] private Color paintColor = new Color(0.05f, 0.22f, 0.95f, 1f);
 
         [Tooltip("Diameter of the paint outlet hole in meters/world units.")]
         [SerializeField] private float paintHoleDiameter = 0.035f;
@@ -110,6 +113,7 @@ namespace SwingingPaint.Core
         public float PaintFlowRate => paintFlowRate;
         public float PaintViscosity => paintViscosity;
         public float PaintQuantity => paintQuantity;
+        public Color PaintColor => paintColor;
         public float PaintHoleDiameter => paintHoleDiameter;
         public float SurfaceAbsorption => surfaceAbsorption;
         public float PaintSpreadRadius => paintSpreadRadius;
@@ -239,6 +243,18 @@ namespace SwingingPaint.Core
             NotifyChanged();
         }
 
+        public void SetPaintColor(Color value)
+        {
+            value.r = Mathf.Clamp01(value.r);
+            value.g = Mathf.Clamp01(value.g);
+            value.b = Mathf.Clamp01(value.b);
+            value.a = Mathf.Clamp01(value.a);
+
+            if (paintColor == value) return;
+            paintColor = value;
+            NotifyChanged();
+        }
+
         public void SetPaintHoleDiameter(float value)
         {
             if (Mathf.Approximately(paintHoleDiameter, value)) return;
@@ -280,6 +296,10 @@ namespace SwingingPaint.Core
             paintFlowRate = Mathf.Max(0f, paintFlowRate);
             paintViscosity = Mathf.Max(0f, paintViscosity);
             paintQuantity = Mathf.Max(0f, paintQuantity);
+            paintColor.r = Mathf.Clamp01(paintColor.r);
+            paintColor.g = Mathf.Clamp01(paintColor.g);
+            paintColor.b = Mathf.Clamp01(paintColor.b);
+            paintColor.a = Mathf.Clamp01(paintColor.a);
             paintHoleDiameter = Mathf.Max(0f, paintHoleDiameter);
             surfaceAbsorption = Mathf.Max(0f, surfaceAbsorption);
             paintSpreadRadius = Mathf.Max(0.01f, paintSpreadRadius);

@@ -1326,6 +1326,11 @@ namespace SwingingPaint.Paint
 
         private Color GetPaintColor()
         {
+            if (physicsSettings != null)
+            {
+                return physicsSettings.PaintColor;
+            }
+
             if (fluidSettings != null)
             {
                 Color color = fluidSettings.paintColor;
