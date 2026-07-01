@@ -39,6 +39,12 @@ namespace SwingingPaint.BucketFluid.Core
         private static readonly int FrameIndexId = Shader.PropertyToID("FrameIndex");
         private static readonly int DeltaTimeId = Shader.PropertyToID("DeltaTime");
         private static readonly int MaxExtractionsPerStepId = Shader.PropertyToID("MaxExtractionsPerStep");
+        private static readonly int ConsumeBucketParticlesId = Shader.PropertyToID("ConsumeBucketParticles");
+        private static readonly int LivePaintColorId = Shader.PropertyToID("LivePaintColor");
+        private static readonly int PhysicalPourModeId = Shader.PropertyToID("PhysicalPourMode");
+        private static readonly int PhysicalExitSpeedId = Shader.PropertyToID("PhysicalExitSpeed");
+        private static readonly int PhysicalEmissionTurbulenceId = Shader.PropertyToID("PhysicalEmissionTurbulence");
+        private static readonly int FallingAirTurbulenceId = Shader.PropertyToID("FallingAirTurbulence");
 
         private static readonly int BucketLocalToWorldId = Shader.PropertyToID("BucketLocalToWorld");
         private static readonly int BucketWorldVelocityId = Shader.PropertyToID("BucketWorldVelocity");
@@ -79,12 +85,18 @@ namespace SwingingPaint.BucketFluid.Core
         private static readonly int CanvasWorldToLocalId = Shader.PropertyToID("CanvasWorldToLocal");
         private static readonly int CanvasTextureWidthId = Shader.PropertyToID("CanvasTextureWidth");
         private static readonly int CanvasTextureHeightId = Shader.PropertyToID("CanvasTextureHeight");
+        private static readonly int CanvasWorldSizeId = Shader.PropertyToID("CanvasWorldSize");
         private static readonly int CanvasContactMultiplierId = Shader.PropertyToID("CanvasContactMultiplier");
         private static readonly int CanvasOpacityMultiplierId = Shader.PropertyToID("CanvasOpacityMultiplier");
         private static readonly int CanvasFlowSpreadBoostId = Shader.PropertyToID("CanvasFlowSpreadBoost");
         private static readonly int CanvasAbsorptionId = Shader.PropertyToID("CanvasAbsorption");
         private static readonly int CanvasMinImpactRadiusId = Shader.PropertyToID("CanvasMinImpactRadius");
         private static readonly int CanvasMaxImpactRadiusId = Shader.PropertyToID("CanvasMaxImpactRadius");
+        private static readonly int CanvasSurfaceSpreadId = Shader.PropertyToID("CanvasSurfaceSpread");
+        private static readonly int CanvasEdgeIrregularityId = Shader.PropertyToID("CanvasEdgeIrregularity");
+        private static readonly int CanvasSplatterStrengthId = Shader.PropertyToID("CanvasSplatterStrength");
+        private static readonly int CanvasDirectionalStretchId = Shader.PropertyToID("CanvasDirectionalStretch");
+        private static readonly int CanvasSlipStrengthId = Shader.PropertyToID("CanvasSlipStrength");
 
         [StructLayout(LayoutKind.Sequential)]
         public struct OutflowParticle
@@ -127,6 +139,27 @@ namespace SwingingPaint.BucketFluid.Core
 
         [Header("Outflow")]
         public bool gpuOutflowEnabled = true;
+        [Tooltip("Use Torricelli/viscosity based emission from PaintHole instead of deleting bucket particles near the drain plane.")]
+        public bool usePhysicalPourModel = true;
+        [Range(0.05f, 1f)]
+        public float dischargeCoefficient = 0.62f;
+        [Min(0f)]
+        public float viscosityFlowDamping = 0.8f;
+        [Min(0.000001f)]
+        public float paintQuantityUnitToCubicMeters = 0.00001f;
+        [Min(0.000001f)]
+        public float particleVolumeMultiplier = 1f;
+        [Min(1)]
+        public int maxPhysicalParticlesPerStep = 96;
+        [Range(0f, 1f)]
+        public float physicalEmissionTurbulence = 0.045f;
+        [Tooltip("Small deterministic air turbulence applied to falling GPU paint particles.")]
+        [Range(0f, 2f)]
+        public float fallingAirTurbulence = 0.18f;
+        [Tooltip("Tuning only. When enabled, paint can leave the bucket without deleting the source GPU fluid particles.")]
+        public bool infinitePaintSupplyForTuning;
+        [Tooltip("Tuning/presentation mode. Recolors active falling GPU paint particles when Paint Color changes.")]
+        public bool livePaintColorWhileFalling = true;
         [Min(0f)]
         public float holeDiameter = 0.035f;
         [Min(0.1f)]
@@ -143,7 +176,10 @@ namespace SwingingPaint.BucketFluid.Core
         [Min(0f)]
         public float minimumOutflowSpeed = 0.55f;
         [Min(1)]
-        public int maxExtractionsPerSubstep = 2;
+        public int maxExtractionsPerSubstep = 8;
+        [Tooltip("Minimum extraction budget used for a continuous visual stream, even when older scene data keeps Max Extractions low.")]
+        [Min(1)]
+        public int minimumContinuousStreamExtractions = 6;
         public float requiredOutwardVelocity = -0.03f;
         [Range(0.1f, 1f)]
         public float outflowRadiusFromHole = 0.45f;
@@ -152,11 +188,11 @@ namespace SwingingPaint.BucketFluid.Core
         [Min(0f)]
         public float outflowSpawnSpacing = 0.012f;
         [Min(0.001f)]
-        public float streamBreakDistance = 0.09f;
+        public float streamBreakDistance = 0.14f;
         [Min(0.001f)]
-        public float maxAdaptiveStreamBreakDistance = 0.30f;
+        public float maxAdaptiveStreamBreakDistance = 0.45f;
         [Min(0.1f)]
-        public float streamRadiusMultiplier = 1.7f;
+        public float streamRadiusMultiplier = 2.4f;
 
         [Header("Capacity")]
         [Min(64)]
@@ -192,11 +228,15 @@ namespace SwingingPaint.BucketFluid.Core
         public int StreamConnectorCount { get; private set; }
         public int CurrentExtractionBudget { get; private set; }
         public float AverageOutflowDensity { get; private set; }
+        public float CurrentPhysicalFlowRateCubicMetersPerSecond { get; private set; }
+        public float CurrentPhysicalExitSpeed { get; private set; }
+        public float RemainingPaintVolumeCubicMeters { get; private set; }
         public bool GpuCanvasWritesEnabled => paintSurface != null && paintSurface.GpuCanvasModeEnabled;
         public bool CanRunPrimaryOutflow => gpuOutflowEnabled && outflowComputeShader != null && _kernelsResolved;
         public float EffectiveOutflowParticleRadius => GetOutflowParticleRadius(
             settings != null ? settings.particleRadius : 0.035f,
             GetHoleDiameter());
+        public float EffectiveVisualStreamRadiusMultiplier => Mathf.Max(streamRadiusMultiplier, 2.2f);
         public float EffectiveDrainCaptureRadius => GetSafeDrainCaptureRadius(
             settings != null ? settings.particleRadius : 0.035f,
             GetHoleDiameter());
@@ -216,6 +256,8 @@ namespace SwingingPaint.BucketFluid.Core
         private bool _hasWarnedSetup;
         private bool _counterReadbackPending;
         private float _nextCounterReadbackTime;
+        private float _physicalEmissionVolumeAccumulator;
+        private bool _paintVolumeInitialized;
         private uint _indexCountPerInstance = 6;
         private uint _indexStart;
         private uint _baseVertex;
@@ -360,6 +402,8 @@ namespace SwingingPaint.BucketFluid.Core
             CanvasGpuWritesThisTick = 0;
             StreamConnectorCount = 0;
             AverageOutflowDensity = 0f;
+            _physicalEmissionVolumeAccumulator = 0f;
+            ResetPaintVolume();
             _frameIndex = 1;
         }
 
@@ -554,16 +598,38 @@ namespace SwingingPaint.BucketFluid.Core
             float outflowParticleRadius = GetOutflowParticleRadius(particleRadius, GetHoleDiameter());
             float viscosity = physicsSettings != null ? physicsSettings.PaintViscosity : settings != null ? settings.viscosity : 0.45f;
             float flowRate = physicsSettings != null ? physicsSettings.PaintFlowRate : 1f;
+            float holeDiameter = GetHoleDiameter();
+            float effectiveFlowRate = GetEffectiveOutflowRate(flowRate, holeDiameter);
+            Vector3 gravity = Vector3.down * (physicsSettings != null ? physicsSettings.Gravity : settings != null ? settings.gravity : 9.81f);
+            float gravityMagnitude = gravity.magnitude;
+            float physicalHead = GetPhysicalPaintHead();
+            float physicalFlowRate = GetTorricelliFlowRate(flowRate, holeDiameter, viscosity, physicalHead, gravityMagnitude);
+            float physicalExitSpeed = GetPhysicalExitSpeed(physicalHead, gravityMagnitude, viscosity);
+            float particleVolume = GetOutflowParticleVolume(outflowParticleRadius);
+            int physicalEmissionBudget = GetPhysicalEmissionBudget(physicalFlowRate, particleVolume, deltaTime);
+            float shaderPaintFlowRate = usePhysicalPourModel ? flowRate : effectiveFlowRate;
             float amountScale = Mathf.Clamp(
                 (outflowParticleRadius * outflowParticleRadius) / Mathf.Max(0.000001f, particleRadius * particleRadius),
                 0.06f,
                 1f);
-            Color color = settings != null ? settings.paintColor : Color.blue;
-            color.a = settings != null ? settings.opacity : color.a;
+            Color color;
+            if (physicsSettings != null)
+            {
+                color = physicsSettings.PaintColor;
+                color.a = Mathf.Clamp01(color.a);
+            }
+            else if (settings != null)
+            {
+                color = settings.paintColor;
+                color.a = Mathf.Clamp01(settings.opacity);
+            }
+            else
+            {
+                color = Color.blue;
+            }
 
             Matrix4x4 localToWorld = simulator != null ? simulator.BucketLocalToWorldMatrix : transform.localToWorldMatrix;
             Vector3 bucketVelocity = motionProvider != null ? motionProvider.WorldVelocity : Vector3.zero;
-            Vector3 gravity = Vector3.down * (physicsSettings != null ? physicsSettings.Gravity : settings != null ? settings.gravity : 9.81f);
             Vector3 holeLocalPosition = simulator != null
                 ? simulator.transform.InverseTransformPoint(paintHoleTransform.position)
                 : paintHoleTransform.localPosition;
@@ -597,21 +663,29 @@ namespace SwingingPaint.BucketFluid.Core
             outflowComputeShader.SetInt(BaseVertexId, unchecked((int)_baseVertex));
             outflowComputeShader.SetInt(FrameIndexId, unchecked((int)_frameIndex));
             outflowComputeShader.SetFloat(DeltaTimeId, deltaTime);
-            CurrentExtractionBudget = GetExtractionBudget(flowRate);
+            CurrentExtractionBudget = usePhysicalPourModel
+                ? physicalEmissionBudget
+                : GetExtractionBudget(effectiveFlowRate, viscosity);
             outflowComputeShader.SetInt(MaxExtractionsPerStepId, CurrentExtractionBudget);
+            outflowComputeShader.SetInt(ConsumeBucketParticlesId, infinitePaintSupplyForTuning ? 0 : 1);
+            outflowComputeShader.SetInt(LivePaintColorId, livePaintColorWhileFalling ? 1 : 0);
+            outflowComputeShader.SetInt(PhysicalPourModeId, usePhysicalPourModel ? 1 : 0);
+            outflowComputeShader.SetFloat(PhysicalExitSpeedId, physicalExitSpeed);
+            outflowComputeShader.SetFloat(PhysicalEmissionTurbulenceId, physicalEmissionTurbulence);
+            outflowComputeShader.SetFloat(FallingAirTurbulenceId, fallingAirTurbulence);
             outflowComputeShader.SetMatrix(BucketLocalToWorldId, localToWorld);
             outflowComputeShader.SetVector(BucketWorldVelocityId, bucketVelocity);
             outflowComputeShader.SetVector(EffectiveWorldGravityId, gravity);
             outflowComputeShader.SetVector(HoleLocalPositionId, holeLocalPosition);
             outflowComputeShader.SetVector(EmitLocalPositionId, emitLocalPosition);
             outflowComputeShader.SetVector(HoleLocalDirectionId, holeLocalDirection.normalized);
-            outflowComputeShader.SetFloat(HoleRadiusId, Mathf.Max(0f, GetHoleDiameter()) * 0.5f);
+            outflowComputeShader.SetFloat(HoleRadiusId, Mathf.Max(0f, holeDiameter) * 0.5f);
             outflowComputeShader.SetFloat(BucketParticleRadiusId, particleRadius);
             outflowComputeShader.SetFloat(ParticleRadiusId, outflowParticleRadius);
-            outflowComputeShader.SetFloat(PaintFlowRateId, flowRate);
+            outflowComputeShader.SetFloat(PaintFlowRateId, shaderPaintFlowRate);
             outflowComputeShader.SetFloat(DrainProbeDepthId, GetSafeDrainProbeDepth(particleRadius));
             outflowComputeShader.SetFloat(DrainCaptureRadiusId, GetSafeDrainCaptureRadius(particleRadius, GetHoleDiameter()));
-            outflowComputeShader.SetFloat(MinimumOutflowSpeedId, minimumOutflowSpeed * Mathf.Max(0.25f, Mathf.Sqrt(Mathf.Max(0.01f, flowRate))));
+            outflowComputeShader.SetFloat(MinimumOutflowSpeedId, minimumOutflowSpeed * Mathf.Max(0.25f, Mathf.Sqrt(Mathf.Max(0.01f, effectiveFlowRate))));
             outflowComputeShader.SetFloat(RequiredOutwardVelocityId, requiredOutwardVelocity);
             outflowComputeShader.SetFloat(OutflowSpawnSpacingId, GetOutflowSpawnSpacing(outflowParticleRadius));
             outflowComputeShader.SetFloat(SmoothingRadiusId, settings != null ? settings.smoothingRadius * 0.75f : 0.075f);
@@ -626,22 +700,33 @@ namespace SwingingPaint.BucketFluid.Core
             outflowComputeShader.SetFloat(MaxFallingSpeedId, maxFallingSpeed);
             outflowComputeShader.SetFloat(OutflowLifetimeId, outflowLifetime);
             outflowComputeShader.SetFloat(SpatialCellSizeId, Mathf.Max(0.0001f, settings != null ? settings.smoothingRadius * 0.75f : 0.075f));
-            outflowComputeShader.SetFloat(StreamBreakDistanceId, streamBreakDistance);
-            outflowComputeShader.SetFloat(MaxAdaptiveStreamBreakDistanceId, maxAdaptiveStreamBreakDistance);
-            outflowComputeShader.SetFloat(StreamRadiusMultiplierId, streamRadiusMultiplier);
+            float effectiveStreamBreakDistance = GetEffectiveStreamBreakDistance(outflowParticleRadius);
+            outflowComputeShader.SetFloat(StreamBreakDistanceId, effectiveStreamBreakDistance);
+            outflowComputeShader.SetFloat(MaxAdaptiveStreamBreakDistanceId, Mathf.Max(maxAdaptiveStreamBreakDistance, effectiveStreamBreakDistance * 2.25f));
+            outflowComputeShader.SetFloat(StreamRadiusMultiplierId, EffectiveVisualStreamRadiusMultiplier);
             outflowComputeShader.SetVector(PaintColorId, color);
-            outflowComputeShader.SetFloat(ParticleAmountId, particleAmount * amountScale);
+            float particleAmountScale = usePhysicalPourModel
+                ? Mathf.Clamp(particleVolume / Mathf.Max(0.0000001f, GetOutflowParticleVolume(0.0065f)), 0.08f, 3f)
+                : Mathf.Clamp(effectiveFlowRate, 0.15f, 3f);
+            outflowComputeShader.SetFloat(ParticleAmountId, particleAmount * amountScale * particleAmountScale);
             outflowComputeShader.SetVector(CanvasPlanePointId, canvasPoint);
             outflowComputeShader.SetVector(CanvasPlaneNormalId, canvasNormal);
             outflowComputeShader.SetMatrix(CanvasWorldToLocalId, canvasTransform.worldToLocalMatrix);
             outflowComputeShader.SetInt(CanvasTextureWidthId, paintSurface.PaintTexture.width);
             outflowComputeShader.SetInt(CanvasTextureHeightId, paintSurface.PaintTexture.height);
+            Vector2 canvasWorldSize = paintSurface.CanvasWorldSize;
+            outflowComputeShader.SetVector(CanvasWorldSizeId, new Vector4(canvasWorldSize.x, canvasWorldSize.y, 0f, 0f));
             outflowComputeShader.SetFloat(CanvasContactMultiplierId, Mathf.Max(0f, paintSurface.contactOffsetMultiplier));
             outflowComputeShader.SetFloat(CanvasOpacityMultiplierId, Mathf.Max(0f, paintSurface.opacityMultiplier));
             outflowComputeShader.SetFloat(CanvasFlowSpreadBoostId, Mathf.Max(0f, paintSurface.flowSpreadBoost));
             outflowComputeShader.SetFloat(CanvasAbsorptionId, physicsSettings != null ? physicsSettings.SurfaceAbsorption : paintSurface.defaultAbsorption);
             outflowComputeShader.SetFloat(CanvasMinImpactRadiusId, paintSurface.minImpactRadius);
             outflowComputeShader.SetFloat(CanvasMaxImpactRadiusId, paintSurface.maxImpactRadius);
+            outflowComputeShader.SetFloat(CanvasSurfaceSpreadId, paintSurface.surfaceSpread);
+            outflowComputeShader.SetFloat(CanvasEdgeIrregularityId, paintSurface.edgeIrregularity);
+            outflowComputeShader.SetFloat(CanvasSplatterStrengthId, paintSurface.splatterStrength);
+            outflowComputeShader.SetFloat(CanvasDirectionalStretchId, paintSurface.directionalStretch);
+            outflowComputeShader.SetFloat(CanvasSlipStrengthId, paintSurface.slidingStrength);
 
             BindBuffers(_clearFrameCountersKernel, bucketParticleBuffer);
             BindBuffers(_extractOutflowKernel, bucketParticleBuffer);
@@ -667,16 +752,127 @@ namespace SwingingPaint.BucketFluid.Core
             return holeDiameter;
         }
 
-        private int GetExtractionBudget(float flowRate)
+        private int GetExtractionBudget(float flowRate, float viscosity)
         {
-            if (flowRate <= 0f)
+            if (flowRate <= 0.005f)
             {
                 return 0;
             }
 
             float flowScale = Mathf.Sqrt(Mathf.Max(0.01f, flowRate));
-            int safeBaseBudget = Mathf.Clamp(maxExtractionsPerSubstep, 1, 2);
-            return Mathf.Max(1, Mathf.RoundToInt(safeBaseBudget * flowScale));
+            float viscosityFlowScale = Mathf.Lerp(1.15f, 0.85f, Mathf.Clamp01(Mathf.Max(0f, viscosity) / 5f));
+            int safeBaseBudget = Mathf.Max(
+                Mathf.Clamp(maxExtractionsPerSubstep, 1, 64),
+                Mathf.Clamp(minimumContinuousStreamExtractions, 1, 64));
+            return Mathf.Clamp(Mathf.RoundToInt(safeBaseBudget * flowScale * viscosityFlowScale), 1, 64);
+        }
+
+        private float GetPhysicalPaintHead()
+        {
+            if (boundary == null)
+            {
+                return Mathf.Max(0.01f, settings != null ? settings.fillHeightPercent * 0.25f : 0.15f);
+            }
+
+            float fillPercent = settings != null ? settings.fillHeightPercent : 0.55f;
+            return Mathf.Max(0.005f, boundary.Height * Mathf.Clamp01(fillPercent));
+        }
+
+        private float GetPhysicalExitSpeed(float paintHead, float gravityMagnitude, float viscosity)
+        {
+            float invViscosity = 1f / (1f + Mathf.Max(0f, viscosityFlowDamping) * Mathf.Max(0f, viscosity));
+            return Mathf.Max(0f, dischargeCoefficient) *
+                   Mathf.Sqrt(Mathf.Max(0f, 2f * gravityMagnitude * Mathf.Max(0f, paintHead))) *
+                   invViscosity;
+        }
+
+        private float GetTorricelliFlowRate(float flowMultiplier, float diameter, float viscosity, float paintHead, float gravityMagnitude)
+        {
+            float radius = Mathf.Max(0f, diameter) * 0.5f;
+            if (flowMultiplier <= 0f || radius <= 0.00025f || paintHead <= 0f)
+            {
+                CurrentPhysicalFlowRateCubicMetersPerSecond = 0f;
+                CurrentPhysicalExitSpeed = 0f;
+                return 0f;
+            }
+
+            float area = Mathf.PI * radius * radius;
+            float exitSpeed = GetPhysicalExitSpeed(paintHead, gravityMagnitude, viscosity);
+            float flowRate = Mathf.Max(0f, flowMultiplier) * area * exitSpeed;
+            CurrentPhysicalFlowRateCubicMetersPerSecond = flowRate;
+            CurrentPhysicalExitSpeed = exitSpeed;
+            return flowRate;
+        }
+
+        private float GetOutflowParticleVolume(float radius)
+        {
+            float safeRadius = Mathf.Max(0.0005f, radius);
+            return 4f / 3f * Mathf.PI * safeRadius * safeRadius * safeRadius * Mathf.Max(0.000001f, particleVolumeMultiplier);
+        }
+
+        private int GetPhysicalEmissionBudget(float flowRate, float particleVolume, float deltaTime)
+        {
+            if (!usePhysicalPourModel || flowRate <= 0f || particleVolume <= 0f || deltaTime <= 0f)
+            {
+                return 0;
+            }
+
+            EnsurePaintVolumeInitialized();
+
+            float emittedVolumeThisStep = flowRate * deltaTime;
+            if (!infinitePaintSupplyForTuning)
+            {
+                emittedVolumeThisStep = Mathf.Min(emittedVolumeThisStep, RemainingPaintVolumeCubicMeters);
+            }
+
+            if (emittedVolumeThisStep <= 0f)
+            {
+                return 0;
+            }
+
+            _physicalEmissionVolumeAccumulator += emittedVolumeThisStep;
+            int budget = Mathf.FloorToInt(_physicalEmissionVolumeAccumulator / particleVolume);
+            budget = Mathf.Clamp(budget, 0, Mathf.Max(1, maxPhysicalParticlesPerStep));
+            float consumedVolume = budget * particleVolume;
+            _physicalEmissionVolumeAccumulator = Mathf.Max(0f, _physicalEmissionVolumeAccumulator - consumedVolume);
+
+            if (!infinitePaintSupplyForTuning)
+            {
+                RemainingPaintVolumeCubicMeters = Mathf.Max(0f, RemainingPaintVolumeCubicMeters - consumedVolume);
+            }
+
+            return budget;
+        }
+
+        private void EnsurePaintVolumeInitialized()
+        {
+            if (_paintVolumeInitialized)
+            {
+                return;
+            }
+
+            ResetPaintVolume();
+        }
+
+        private void ResetPaintVolume()
+        {
+            float quantity = physicsSettings != null ? physicsSettings.PaintQuantity : 100f;
+            RemainingPaintVolumeCubicMeters = Mathf.Max(0f, quantity) * Mathf.Max(0.000001f, paintQuantityUnitToCubicMeters);
+            _paintVolumeInitialized = true;
+        }
+
+        private static float GetEffectiveOutflowRate(float flowRate, float diameter)
+        {
+            float safeFlowRate = Mathf.Max(0f, flowRate);
+            float safeDiameter = Mathf.Max(0f, diameter);
+            if (safeFlowRate <= 0f || safeDiameter <= 0.0005f)
+            {
+                return 0f;
+            }
+
+            const float referenceDiameter = 0.035f;
+            float diameterScale = safeDiameter / referenceDiameter;
+            return safeFlowRate * diameterScale * diameterScale;
         }
 
         private float GetOutflowParticleRadius(float bucketParticleRadius, float diameter)
@@ -690,6 +886,13 @@ namespace SwingingPaint.BucketFluid.Core
         private float GetOutflowSpawnSpacing(float outflowParticleRadius)
         {
             return Mathf.Max(outflowParticleRadius * 0.8f, outflowSpawnSpacing);
+        }
+
+        private float GetEffectiveStreamBreakDistance(float outflowParticleRadius)
+        {
+            float spacing = GetOutflowSpawnSpacing(outflowParticleRadius);
+            float radiusDrivenBreak = Mathf.Max(outflowParticleRadius * 8f, spacing * 4f);
+            return Mathf.Max(streamBreakDistance, radiusDrivenBreak);
         }
 
         private float GetSafeDrainProbeDepth(float particleRadius)
@@ -791,7 +994,15 @@ namespace SwingingPaint.BucketFluid.Core
             drainProbeDepth = Mathf.Clamp(drainProbeDepth, 0f, 0.02f);
             drainCaptureRadius = Mathf.Clamp(drainCaptureRadius, 0f, 0.12f);
             minimumOutflowSpeed = Mathf.Max(0f, minimumOutflowSpeed);
-            maxExtractionsPerSubstep = Mathf.Clamp(maxExtractionsPerSubstep, 1, 8);
+            maxExtractionsPerSubstep = Mathf.Clamp(maxExtractionsPerSubstep, 1, 64);
+            minimumContinuousStreamExtractions = Mathf.Clamp(minimumContinuousStreamExtractions, 1, 64);
+            dischargeCoefficient = Mathf.Clamp(dischargeCoefficient, 0.05f, 1f);
+            viscosityFlowDamping = Mathf.Max(0f, viscosityFlowDamping);
+            paintQuantityUnitToCubicMeters = Mathf.Max(0.000001f, paintQuantityUnitToCubicMeters);
+            particleVolumeMultiplier = Mathf.Max(0.000001f, particleVolumeMultiplier);
+            maxPhysicalParticlesPerStep = Mathf.Max(1, maxPhysicalParticlesPerStep);
+            physicalEmissionTurbulence = Mathf.Clamp01(physicalEmissionTurbulence);
+            fallingAirTurbulence = Mathf.Clamp(fallingAirTurbulence, 0f, 2f);
             outflowRadiusFromHole = Mathf.Clamp(outflowRadiusFromHole, 0.1f, 1f);
             maxOutflowRadiusFromBucketParticle = Mathf.Clamp(maxOutflowRadiusFromBucketParticle, 0.1f, 1f);
             outflowSpawnSpacing = Mathf.Max(0f, outflowSpawnSpacing);

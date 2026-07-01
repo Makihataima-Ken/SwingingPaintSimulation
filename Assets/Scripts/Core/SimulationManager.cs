@@ -41,6 +41,8 @@ namespace SwingingPaint.Core
 
         [Header("Fixed Step Runtime")]
         public bool driveFixedStepSimulation = true;
+        [Tooltip("Development fallback only. Keep off for the final project so failed GPU paint does not produce misleading output.")]
+        public bool allowCpuPaintFallback = false;
         [Min(0.001f)]
         public float fixedTimestep = 1f / 60f;
         [Min(1)]
@@ -53,6 +55,7 @@ namespace SwingingPaint.Core
         private float _initialAngularVelocity;
         private float _accumulator;
         private PhysicsSettings _subscribedSettings;
+        private bool _warnedCpuPaintFallbackDisabled;
 
         /// <summary>
         /// Global access to the active SimulationManager.
@@ -112,6 +115,7 @@ namespace SwingingPaint.Core
             }
 
             SubscribeToSettings();
+            ValidateGpuRuntime();
 
             // Capture initial pendulum state for reset/restart
             if (pendulum != null)
@@ -272,9 +276,10 @@ namespace SwingingPaint.Core
             physicsSettings.SetRestLength(2f);
             physicsSettings.SetRopeStiffness(50f);
             physicsSettings.SetRopeElasticity(0.5f);
-            physicsSettings.SetPaintFlowRate(1.0f);
-            physicsSettings.SetPaintViscosity(0.5f);
+            physicsSettings.SetPaintFlowRate(0.5f);
+            physicsSettings.SetPaintViscosity(1.2f);
             physicsSettings.SetPaintQuantity(100f);
+            physicsSettings.SetPaintColor(new Color(0.05f, 0.22f, 0.95f, 1f));
             physicsSettings.SetPaintHoleDiameter(0.035f);
             physicsSettings.SetSurfaceAbsorption(0.1f);
             physicsSettings.SetPaintSpreadRadius(0.2f);
@@ -338,6 +343,8 @@ namespace SwingingPaint.Core
             if (fluidSimulator != null && fluidSimulator.settings != null)
             {
                 fluidSimulator.settings.gravity = physicsSettings.Gravity;
+                fluidSimulator.settings.paintColor = physicsSettings.PaintColor;
+                fluidSimulator.settings.opacity = physicsSettings.PaintColor.a;
             }
 
             if (paintEmitter != null)
@@ -420,9 +427,41 @@ namespace SwingingPaint.Core
             }
 
             bool gpuOutflowCanRun = gpuOutflowController != null && gpuOutflowController.CanRunPrimaryOutflow;
-            if (paintEmitter != null && !gpuOutflowCanRun)
+            if (paintEmitter != null && !gpuOutflowCanRun && allowCpuPaintFallback)
             {
                 paintEmitter.Step(deltaTime);
+            }
+            else if (paintEmitter != null && !gpuOutflowCanRun && !_warnedCpuPaintFallbackDisabled)
+            {
+                _warnedCpuPaintFallbackDisabled = true;
+                Debug.LogWarning(
+                    "[SimulationManager] GPU paint outflow is not ready and CPU PaintEmitter fallback is disabled. " +
+                    "Fix GPU setup instead of trusting fallback output.",
+                    this);
+            }
+        }
+
+        private void ValidateGpuRuntime()
+        {
+            if (!SystemInfo.supportsComputeShaders)
+            {
+                Debug.LogError(
+                    "[SimulationManager] Compute shaders are not supported on this runtime. " +
+                    "The bucket fluid and GPU paint outflow cannot run.",
+                    this);
+                return;
+            }
+
+            UnityEngine.Rendering.GraphicsDeviceType graphicsDevice = SystemInfo.graphicsDeviceType;
+            if (graphicsDevice == UnityEngine.Rendering.GraphicsDeviceType.OpenGLCore ||
+                graphicsDevice == UnityEngine.Rendering.GraphicsDeviceType.OpenGLES3 ||
+                graphicsDevice == UnityEngine.Rendering.GraphicsDeviceType.OpenGLES2)
+            {
+                Debug.LogWarning(
+                    "[SimulationManager] Current graphics API is " + graphicsDevice +
+                    ". On Linux this project should be launched with Vulkan for reliable compute buffers and random-write paint textures. " +
+                    "Use Unity Hub launch arguments: -force-vulkan.",
+                    this);
             }
         }
 

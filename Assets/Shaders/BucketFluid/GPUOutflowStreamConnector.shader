@@ -3,6 +3,9 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowStreamConnector"
     Properties
     {
         _StreamRadiusMultiplier ("Stream Radius Multiplier", Float) = 1.7
+        _TrailLengthMultiplier ("Trail Length Multiplier", Float) = 1.6
+        _MinimumConnectorLength ("Minimum Connector Length", Float) = 0.035
+        _ConnectorOpacityMultiplier ("Connector Opacity Multiplier", Float) = 1.1
     }
 
     SubShader
@@ -52,6 +55,9 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowStreamConnector"
 
             StructuredBuffer<OutflowParticle> _OutflowParticles;
             float _StreamRadiusMultiplier;
+            float _TrailLengthMultiplier;
+            float _MinimumConnectorLength;
+            float _ConnectorOpacityMultiplier;
             float3 _CameraRight;
             float3 _CameraForward;
 
@@ -72,16 +78,36 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowStreamConnector"
                 v2f output;
                 OutflowParticle particle = _OutflowParticles[input.instanceID];
                 int neighborIndex = particle.cellIndex;
-                float active = particle.active != 0 && neighborIndex >= 0 ? 1.0 : 0.0;
+                float active = particle.active != 0 ? 1.0 : 0.0;
 
-                OutflowParticle neighbor = _OutflowParticles[max(neighborIndex, 0)];
-                active *= neighbor.active != 0 ? 1.0 : 0.0;
+                OutflowParticle neighbor = particle;
+                float hasNeighbor = 0.0;
+                if (neighborIndex >= 0)
+                {
+                    neighbor = _OutflowParticles[neighborIndex];
+                    hasNeighbor = neighbor.active != 0 ? 1.0 : 0.0;
+                }
 
-                float3 start = particle.positionWorld;
-                float3 end = neighbor.positionWorld;
+                float3 start = hasNeighbor > 0.5 ? particle.positionWorld : particle.previousPositionWorld;
+                float3 end = hasNeighbor > 0.5 ? neighbor.positionWorld : particle.positionWorld;
                 float3 segment = end - start;
                 float segmentLength = length(segment);
-                float3 segmentDirection = segmentLength > 0.00001 ? segment / segmentLength : float3(0.0, -1.0, 0.0);
+                float3 velocityDirection = length(particle.velocityWorld) > 0.00001
+                    ? normalize(particle.velocityWorld)
+                    : float3(0.0, -1.0, 0.0);
+
+                if (segmentLength < _MinimumConnectorLength)
+                {
+                    float centerBias = hasNeighbor > 0.5 ? 0.5 : 1.0;
+                    float3 center = lerp(start, end, centerBias);
+                    float lengthTarget = max(_MinimumConnectorLength, segmentLength) * max(0.1, _TrailLengthMultiplier);
+                    start = center - velocityDirection * lengthTarget * 0.5;
+                    end = center + velocityDirection * lengthTarget * 0.5;
+                    segment = end - start;
+                    segmentLength = length(segment);
+                }
+
+                float3 segmentDirection = segmentLength > 0.00001 ? segment / segmentLength : velocityDirection;
                 float3 side = cross(segmentDirection, _CameraForward);
 
                 if (dot(side, side) < 0.00001)
@@ -94,7 +120,9 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowStreamConnector"
                 }
 
                 float t = saturate(input.vertex.y + 0.5);
-                float halfWidth = max(particle.radius, neighbor.radius) * max(0.1, _StreamRadiusMultiplier);
+                float neighborRadius = hasNeighbor > 0.5 ? neighbor.radius : particle.radius;
+                float speedWidth = lerp(1.0, 1.22, saturate(length(particle.velocityWorld) / 8.0));
+                float halfWidth = max(particle.radius, neighborRadius) * max(0.1, _StreamRadiusMultiplier) * speedWidth;
                 float3 worldPosition = lerp(start, end, t) + side * input.vertex.x * halfWidth * active;
 
                 if (active < 0.5)
@@ -102,9 +130,10 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowStreamConnector"
                     worldPosition = float3(0.0, -100000.0, 0.0);
                 }
 
-                float wetness = min(particle.wetness, neighbor.wetness);
-                float densityAlpha = saturate((particle.density + neighbor.density) * 0.15);
-                float alpha = particle.color.a * wetness * lerp(0.55, 1.0, densityAlpha) * active;
+                float wetness = hasNeighbor > 0.5 ? min(particle.wetness, neighbor.wetness) : particle.wetness;
+                float neighborDensity = hasNeighbor > 0.5 ? neighbor.density : particle.density;
+                float densityAlpha = saturate((particle.density + neighborDensity) * 0.15);
+                float alpha = saturate(particle.color.a * wetness * lerp(0.72, 1.0, densityAlpha) * _ConnectorOpacityMultiplier) * active;
 
                 output.vertex = UnityWorldToClipPos(worldPosition);
                 output.color = fixed4(particle.color.rgb, alpha);

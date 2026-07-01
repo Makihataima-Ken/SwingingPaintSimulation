@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using SwingingPaint.BucketFluid.Core;
+using SwingingPaint.Core;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -269,6 +270,11 @@ namespace SwingingPaint.BucketFluid.Rendering
 
         private Color GetParticleColor()
         {
+            if (SimulationManager.Instance != null && SimulationManager.Instance.physicsSettings != null)
+            {
+                return SimulationManager.Instance.physicsSettings.PaintColor;
+            }
+
             if (simulator != null && simulator.settings != null)
             {
                 Color color = simulator.settings.paintColor;

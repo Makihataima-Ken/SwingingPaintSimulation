@@ -13,6 +13,10 @@ namespace SwingingPaint.BucketFluid.Rendering
         private static readonly int OutflowParticlesId = Shader.PropertyToID("_OutflowParticles");
         private static readonly int ParticleSizeId = Shader.PropertyToID("_ParticleSize");
         private static readonly int StreamRadiusMultiplierId = Shader.PropertyToID("_StreamRadiusMultiplier");
+        private static readonly int TrailLengthMultiplierId = Shader.PropertyToID("_TrailLengthMultiplier");
+        private static readonly int MinimumConnectorLengthId = Shader.PropertyToID("_MinimumConnectorLength");
+        private static readonly int ParticleOpacityMultiplierId = Shader.PropertyToID("_ParticleOpacityMultiplier");
+        private static readonly int ConnectorOpacityMultiplierId = Shader.PropertyToID("_ConnectorOpacityMultiplier");
         private static readonly int CameraRightId = Shader.PropertyToID("_CameraRight");
         private static readonly int CameraUpId = Shader.PropertyToID("_CameraUp");
         private static readonly int CameraForwardId = Shader.PropertyToID("_CameraForward");
@@ -31,6 +35,18 @@ namespace SwingingPaint.BucketFluid.Rendering
         public float fallbackParticleSize = 0.018f;
         [Min(0.1f)]
         public float particleDiameterMultiplier = 1.35f;
+        [Min(0.1f)]
+        public float minimumVisualParticleDiameterMultiplier = 1.75f;
+        [Min(0.1f)]
+        public float minimumVisualStreamRadiusMultiplier = 2.15f;
+        [Min(0.1f)]
+        public float trailLengthMultiplier = 1.6f;
+        [Min(0.001f)]
+        public float minimumConnectorLength = 0.035f;
+        [Range(0f, 2f)]
+        public float particleOpacityMultiplier = 0.95f;
+        [Range(0f, 2f)]
+        public float connectorOpacityMultiplier = 1.1f;
 
         public int RenderedInstanceCapacity { get; private set; }
 
@@ -77,6 +93,10 @@ namespace SwingingPaint.BucketFluid.Rendering
             _propertyBlock.SetBuffer(OutflowParticlesId, outflowController.OutflowParticleBuffer);
             _propertyBlock.SetFloat(ParticleSizeId, GetParticleSize());
             _propertyBlock.SetFloat(StreamRadiusMultiplierId, GetStreamRadiusMultiplier());
+            _propertyBlock.SetFloat(TrailLengthMultiplierId, trailLengthMultiplier);
+            _propertyBlock.SetFloat(MinimumConnectorLengthId, minimumConnectorLength);
+            _propertyBlock.SetFloat(ParticleOpacityMultiplierId, particleOpacityMultiplier);
+            _propertyBlock.SetFloat(ConnectorOpacityMultiplierId, connectorOpacityMultiplier);
             _propertyBlock.SetVector(CameraRightId, cameraRight);
             _propertyBlock.SetVector(CameraUpId, cameraUp);
             _propertyBlock.SetVector(CameraForwardId, cameraForward);
@@ -270,7 +290,8 @@ namespace SwingingPaint.BucketFluid.Rendering
         {
             if (outflowController != null)
             {
-                return Mathf.Max(0.003f, outflowController.EffectiveOutflowParticleRadius * 2f * particleDiameterMultiplier);
+                float multiplier = Mathf.Max(particleDiameterMultiplier, minimumVisualParticleDiameterMultiplier);
+                return Mathf.Max(0.003f, outflowController.EffectiveOutflowParticleRadius * 2f * multiplier);
             }
 
             return fallbackParticleSize;
@@ -280,10 +301,10 @@ namespace SwingingPaint.BucketFluid.Rendering
         {
             if (outflowController != null)
             {
-                return outflowController.streamRadiusMultiplier;
+                return Mathf.Max(outflowController.EffectiveVisualStreamRadiusMultiplier, minimumVisualStreamRadiusMultiplier);
             }
 
-            return 1.7f;
+            return minimumVisualStreamRadiusMultiplier;
         }
 
         private static Mesh CreateQuadMesh()
@@ -316,6 +337,12 @@ namespace SwingingPaint.BucketFluid.Rendering
             renderBounds.size = size;
             fallbackParticleSize = Mathf.Max(0.001f, fallbackParticleSize);
             particleDiameterMultiplier = Mathf.Max(0.1f, particleDiameterMultiplier);
+            minimumVisualParticleDiameterMultiplier = Mathf.Max(0.1f, minimumVisualParticleDiameterMultiplier);
+            minimumVisualStreamRadiusMultiplier = Mathf.Max(0.1f, minimumVisualStreamRadiusMultiplier);
+            trailLengthMultiplier = Mathf.Max(0.1f, trailLengthMultiplier);
+            minimumConnectorLength = Mathf.Max(0.001f, minimumConnectorLength);
+            particleOpacityMultiplier = Mathf.Clamp(particleOpacityMultiplier, 0f, 2f);
+            connectorOpacityMultiplier = Mathf.Clamp(connectorOpacityMultiplier, 0f, 2f);
         }
     }
 }

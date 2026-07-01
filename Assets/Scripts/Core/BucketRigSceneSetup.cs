@@ -33,6 +33,8 @@ public class BucketRigSceneSetup : MonoBehaviour
     [Tooltip("How far below the mathematical bucket bottom the PaintHole emission origin sits.")]
     public float paintHoleOffsetBelowBottom = 0.025f;
 
+    private bool _assignQueued;
+
     private void OnEnable()
     {
         AssignReferences(createMissingRopeRenderer: true, createMissingMarkers: true);
@@ -381,9 +383,38 @@ public class BucketRigSceneSetup : MonoBehaviour
 
         if (autoAssignOnValidate)
         {
-            AssignReferences(createMissingRopeRenderer: false, createMissingMarkers: false);
+            QueueEditorAssignReferences();
         }
     }
+
+    private void QueueEditorAssignReferences()
+    {
+#if UNITY_EDITOR
+        if (_assignQueued)
+        {
+            return;
+        }
+
+        _assignQueued = true;
+        UnityEditor.EditorApplication.delayCall += AssignReferencesAfterValidation;
+        return;
+#endif
+
+        AssignReferences(createMissingRopeRenderer: false, createMissingMarkers: false);
+    }
+
+#if UNITY_EDITOR
+    private void AssignReferencesAfterValidation()
+    {
+        if (this == null)
+        {
+            return;
+        }
+
+        _assignQueued = false;
+        AssignReferences(createMissingRopeRenderer: false, createMissingMarkers: false);
+    }
+#endif
 
     private static Transform FindChildOrSelf(Transform current, string targetName)
     {
