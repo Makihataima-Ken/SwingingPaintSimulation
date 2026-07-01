@@ -37,12 +37,49 @@ namespace SwingingPaint.BucketFluid.Core
         private const string WallDampingName = "WallDamping";
         private const string WallFrictionName = "WallFriction";
         private const string ParticleRadiusName = "ParticleRadius";
+        private const string SmoothingRadiusName = "SmoothingRadius";
+        private const string RestDensityName = "RestDensity";
+        private const string PressureStiffnessName = "PressureStiffness";
+        private const string NearPressureStiffnessName = "NearPressureStiffness";
+        private const string ViscosityName = "Viscosity";
+        private const string SurfaceTensionName = "SurfaceTension";
+        private const string CohesionName = "Cohesion";
+        private const string DampingName = "Damping";
         private const string CellParticleCountsBufferName = "cellParticleCounts";
         private const string CellParticleIndicesBufferName = "cellParticleIndices";
         private const string SpatialGridCountersBufferName = "spatialGridCounters";
         private const string SpatialCellSizeName = "SpatialCellSize";
         private const string HashTableSizeName = "HashTableSize";
         private const string MaxParticlesPerCellName = "MaxParticlesPerCell";
+        private static readonly int ParticlesBufferId = Shader.PropertyToID(ParticlesBufferName);
+        private static readonly int ParticleCountId = Shader.PropertyToID(ParticleCountName);
+        private static readonly int DeltaTimeId = Shader.PropertyToID(DeltaTimeName);
+        private static readonly int EffectiveLocalAccelerationId = Shader.PropertyToID(EffectiveLocalAccelerationName);
+        private static readonly int DragId = Shader.PropertyToID(DragName);
+        private static readonly int MaxVelocityId = Shader.PropertyToID(MaxVelocityName);
+        private static readonly int BoundaryLocalCenterOffsetId = Shader.PropertyToID(BoundaryLocalCenterOffsetName);
+        private static readonly int BottomYId = Shader.PropertyToID(BottomYName);
+        private static readonly int TopYId = Shader.PropertyToID(TopYName);
+        private static readonly int BottomRadiusId = Shader.PropertyToID(BottomRadiusName);
+        private static readonly int TopRadiusId = Shader.PropertyToID(TopRadiusName);
+        private static readonly int ClampTopId = Shader.PropertyToID(ClampTopName);
+        private static readonly int WallDampingId = Shader.PropertyToID(WallDampingName);
+        private static readonly int WallFrictionId = Shader.PropertyToID(WallFrictionName);
+        private static readonly int ParticleRadiusId = Shader.PropertyToID(ParticleRadiusName);
+        private static readonly int SmoothingRadiusId = Shader.PropertyToID(SmoothingRadiusName);
+        private static readonly int RestDensityId = Shader.PropertyToID(RestDensityName);
+        private static readonly int PressureStiffnessId = Shader.PropertyToID(PressureStiffnessName);
+        private static readonly int NearPressureStiffnessId = Shader.PropertyToID(NearPressureStiffnessName);
+        private static readonly int ViscosityId = Shader.PropertyToID(ViscosityName);
+        private static readonly int SurfaceTensionId = Shader.PropertyToID(SurfaceTensionName);
+        private static readonly int CohesionId = Shader.PropertyToID(CohesionName);
+        private static readonly int DampingId = Shader.PropertyToID(DampingName);
+        private static readonly int CellParticleCountsBufferId = Shader.PropertyToID(CellParticleCountsBufferName);
+        private static readonly int CellParticleIndicesBufferId = Shader.PropertyToID(CellParticleIndicesBufferName);
+        private static readonly int SpatialGridCountersBufferId = Shader.PropertyToID(SpatialGridCountersBufferName);
+        private static readonly int SpatialCellSizeId = Shader.PropertyToID(SpatialCellSizeName);
+        private static readonly int HashTableSizeId = Shader.PropertyToID(HashTableSizeName);
+        private static readonly int MaxParticlesPerCellId = Shader.PropertyToID(MaxParticlesPerCellName);
 
         /// <summary>
         /// CPU-side copy of the particle layout used by BucketFluid.compute.
@@ -81,13 +118,16 @@ namespace SwingingPaint.BucketFluid.Core
         public ComputeShader fluidComputeShader;
         public BucketMotionProvider motionProvider;
         public BucketFluidBoundary boundary;
+        public GPUFluidOutflowController outflowController;
 
         [Header("Simulation")]
         [Tooltip("Keeps particles inside the mathematical bucket boundary after predicted motion.")]
         public bool boundaryCollisionEnabled = true;
         public bool pauseSimulation;
-        public bool pauseAfterReset = true;
+        public bool pauseAfterReset = false;
         public bool stepSimulationOnce;
+        [Tooltip("Skip this component's FixedUpdate loop when SimulationManager is driving fixed-step simulation.")]
+        public bool useSimulationManagerDriver = true;
 
         [Header("Spatial Grid")]
         public bool spatialGridEnabled = true;
@@ -98,12 +138,16 @@ namespace SwingingPaint.BucketFluid.Core
         [Tooltip("Seconds between async debug readbacks of grid counters.")]
         public float spatialGridDebugReadbackInterval = 0.25f;
 
+        [Tooltip("Seconds between async debug readbacks of particle validation data.")]
+        public float particleValidationReadbackInterval = 0.25f;
+
         public bool IsInitialized { get; private set; }
         public int TargetParticleCount => settings != null ? settings.ActiveParticleCount : 0;
         public int ActiveParticleCount => RuntimeActiveParticleCount;
         public int InitializedParticleCount { get; private set; }
         public int RuntimeActiveParticleCount { get; private set; }
         public bool HasRequiredReferences => settings != null && fluidComputeShader != null && motionProvider != null && boundary != null;
+        public bool HasGpuComputeSupport => SystemInfo.supportsComputeShaders;
         public bool HasParticleBuffer => _particleBuffer != null;
         public bool ParticleBufferValid => _particleBuffer != null && _particleBuffer.IsValid();
         public int ParticleBufferCount => _particleBuffer != null ? _particleBuffer.count : 0;
@@ -133,6 +177,11 @@ namespace SwingingPaint.BucketFluid.Core
         public bool SpatialGridCountersAvailable { get; private set; }
         public int SpatialGridInsertedCount { get; private set; }
         public int SpatialGridOverflowCount { get; private set; }
+        public bool ParticleValidationAvailable { get; private set; }
+        public int InvalidParticleCount { get; private set; }
+        public int BoundaryLeakCount { get; private set; }
+        public float MaxObservedVelocity { get; private set; }
+        public float AverageObservedDensity { get; private set; }
 
         /// <summary>
         /// Structured buffer containing FluidParticle records in bucket-local space.
@@ -158,13 +207,20 @@ namespace SwingingPaint.BucketFluid.Core
         private bool _hasLoggedKernelError;
         private bool _hasWarnedSpatialGridMissing;
         private bool _hasWarnedSpatialGridOverflow;
+        private bool _hasWarnedInvalidParticles;
+        private bool _hasWarnedBoundaryLeaks;
         private bool _spatialGridReadbackPending;
+        private bool _particleValidationReadbackPending;
         private float _nextSpatialGridReadbackTime;
+        private float _nextParticleValidationReadbackTime;
         private bool _kernelsResolved;
         private int _applyForcesKernel;
         private int _predictPositionsKernel;
         private int _clearSpatialGridKernel;
         private int _buildSpatialGridKernel;
+        private int _computeDensityKernel;
+        private int _solveConstraintsKernel;
+        private int _applyViscosityKernel;
         private int _resolveBoundaryKernel;
         private int _updateParticlesKernel;
         private int _activeHashTableSize;
@@ -183,6 +239,13 @@ namespace SwingingPaint.BucketFluid.Core
 
         private void FixedUpdate()
         {
+            if (useSimulationManagerDriver &&
+                SimulationManager.Instance != null &&
+                SimulationManager.Instance.driveFixedStepSimulation)
+            {
+                return;
+            }
+
             if (pauseSimulation && !stepSimulationOnce)
             {
                 SimulationRunning = false;
@@ -233,6 +296,12 @@ namespace SwingingPaint.BucketFluid.Core
                 return;
             }
 
+            if (!ValidateGpuPath())
+            {
+                ReleaseParticleBuffer();
+                return;
+            }
+
             if (!HasValidParticleStride)
             {
                 ReleaseParticleBuffer();
@@ -251,7 +320,10 @@ namespace SwingingPaint.BucketFluid.Core
             FluidParticle[] particles = CreateInitialParticles(targetParticleCount);
             int activeBeforeUpload = CountActiveParticles(particles);
 
-            LogResetDiagnostics(particles, targetParticleCount, activeBeforeUpload);
+            if (settings.enableDebug)
+            {
+                LogResetDiagnostics(particles, targetParticleCount, activeBeforeUpload);
+            }
 
             _particleBuffer = new ComputeBuffer(particles.Length, FluidParticleStride, ComputeBufferType.Structured);
             _particleBuffer.SetData(particles);
@@ -261,14 +333,34 @@ namespace SwingingPaint.BucketFluid.Core
             IsInitialized = true;
             SimulationRunning = false;
             _hasWarnedInvalidParticleBuffer = false;
+            _hasWarnedInvalidParticles = false;
+            _hasWarnedBoundaryLeaks = false;
+            ParticleValidationAvailable = false;
+            InvalidParticleCount = 0;
+            BoundaryLeakCount = 0;
+            MaxObservedVelocity = 0f;
+            AverageObservedDensity = 0f;
             EnsureSpatialGridBuffers();
             BuildSpatialGridForCurrentParticles();
+
+            if (outflowController != null && outflowController.gpuOutflowEnabled)
+            {
+                outflowController.ResetOutflow();
+            }
 
             if (pauseAfterReset)
             {
                 pauseSimulation = true;
                 stepSimulationOnce = false;
-                Debug.Log("Fluid reset and simulation paused for inspection.", this);
+                if (settings.enableDebug)
+                {
+                    Debug.Log("Fluid reset and simulation paused for inspection.", this);
+                }
+            }
+            else
+            {
+                pauseSimulation = false;
+                stepSimulationOnce = false;
             }
         }
 
@@ -337,6 +429,32 @@ namespace SwingingPaint.BucketFluid.Core
                 boundary = GetComponent<BucketFluidBoundary>();
             }
 
+            if (outflowController == null)
+            {
+                outflowController = GetComponentInChildren<GPUFluidOutflowController>();
+            }
+
+            if (outflowController == null)
+            {
+                Transform paintHole = transform.Find("PaintHole");
+                if (paintHole != null)
+                {
+                    outflowController = paintHole.GetComponent<GPUFluidOutflowController>();
+                    if (outflowController == null)
+                    {
+                        outflowController = paintHole.gameObject.AddComponent<GPUFluidOutflowController>();
+                    }
+                }
+            }
+
+            if (outflowController != null)
+            {
+                outflowController.simulator = this;
+                outflowController.settings = settings;
+                outflowController.motionProvider = motionProvider;
+                outflowController.boundary = boundary;
+            }
+
 #if UNITY_EDITOR
             if (fluidComputeShader == null)
             {
@@ -345,12 +463,17 @@ namespace SwingingPaint.BucketFluid.Core
 #endif
         }
 
-        private void StepSimulation(float deltaTime)
+        public void StepSimulation(float deltaTime)
         {
             SimulationRunning = false;
             LastSimulationSubsteps = 0;
 
             if (!IsInitialized || !HasRequiredReferences || deltaTime <= Mathf.Epsilon)
+            {
+                return;
+            }
+
+            if (!ValidateGpuPath())
             {
                 return;
             }
@@ -385,7 +508,40 @@ namespace SwingingPaint.BucketFluid.Core
                 SetSimulationShaderParameters(substepDeltaTime);
                 fluidComputeShader.Dispatch(_applyForcesKernel, groups, 1, 1);
                 fluidComputeShader.Dispatch(_predictPositionsKernel, groups, 1, 1);
+
+                if (outflowController != null && outflowController.gpuOutflowEnabled)
+                {
+                    outflowController.StepOutflowFromBucket(this, _particleBuffer, InitializedParticleCount, substepDeltaTime);
+                }
+
                 DispatchSpatialGrid(groups);
+
+                if (SpatialGridBufferValid)
+                {
+                    fluidComputeShader.Dispatch(_applyViscosityKernel, groups, 1, 1);
+                    DispatchSpatialGrid(groups);
+                    fluidComputeShader.Dispatch(_computeDensityKernel, groups, 1, 1);
+
+                    int solverIterations = Mathf.Max(1, settings.solverIterations);
+                    for (int solverIteration = 0; solverIteration < solverIterations; solverIteration++)
+                    {
+                        fluidComputeShader.Dispatch(_solveConstraintsKernel, groups, 1, 1);
+
+                        if (BoundaryCollisionEnabled)
+                        {
+                            fluidComputeShader.Dispatch(_resolveBoundaryKernel, groups, 1, 1);
+                        }
+                    }
+                }
+                else if (!_hasWarnedSpatialGridMissing)
+                {
+                    _hasWarnedSpatialGridMissing = true;
+                    Debug.LogWarning(
+                        "Fluid density, pressure, viscosity, and cohesion kernels require spatial grid buffers. " +
+                        "Use Reset Fluid to rebuild them.",
+                        this
+                    );
+                }
 
                 if (BoundaryCollisionEnabled)
                 {
@@ -398,6 +554,7 @@ namespace SwingingPaint.BucketFluid.Core
             SimulationRunning = true;
             LastSimulationSubsteps = substeps;
             RequestSpatialGridCountersReadback();
+            RequestParticleValidationReadback();
         }
 
         private void ValidateSetup()
@@ -424,6 +581,16 @@ namespace SwingingPaint.BucketFluid.Core
             if (fluidComputeShader == null)
             {
                 missingFields.Add("Missing Fluid Compute Shader");
+            }
+
+            if (settings != null && !settings.useGPU)
+            {
+                missingFields.Add("GPU fluid disabled in settings (this project has no CPU fluid simulation fallback)");
+            }
+
+            if (!HasGpuComputeSupport)
+            {
+                missingFields.Add("Current graphics device does not support compute shaders");
             }
 
             if (missingFields.Count == 0)
@@ -462,6 +629,9 @@ namespace SwingingPaint.BucketFluid.Core
                 !TryFindKernel("PredictPositions", out _predictPositionsKernel) ||
                 !TryFindKernel("ClearSpatialGrid", out _clearSpatialGridKernel) ||
                 !TryFindKernel("BuildSpatialGrid", out _buildSpatialGridKernel) ||
+                !TryFindKernel("ComputeDensity", out _computeDensityKernel) ||
+                !TryFindKernel("SolveConstraints", out _solveConstraintsKernel) ||
+                !TryFindKernel("ApplyViscosity", out _applyViscosityKernel) ||
                 !TryFindKernel("ResolveBoundary", out _resolveBoundaryKernel) ||
                 !TryFindKernel("UpdateParticles", out _updateParticlesKernel))
             {
@@ -470,6 +640,34 @@ namespace SwingingPaint.BucketFluid.Core
 
             _kernelsResolved = true;
             _hasLoggedKernelError = false;
+            return true;
+        }
+
+        private bool ValidateGpuPath()
+        {
+            if (settings == null)
+            {
+                return false;
+            }
+
+            if (!settings.useGPU)
+            {
+                Debug.LogError("GPUFluidSimulator is GPU-only, but BucketFluidSettings.useGPU is false.", this);
+                return false;
+            }
+
+            if (!HasGpuComputeSupport)
+            {
+                Debug.LogError("GPUFluidSimulator requires compute shader support. No CPU fluid fallback is available.", this);
+                return false;
+            }
+
+            if (fluidComputeShader == null)
+            {
+                Debug.LogError("GPUFluidSimulator requires BucketFluid.compute. No CPU fluid fallback is available.", this);
+                return false;
+            }
+
             return true;
         }
 
@@ -489,38 +687,58 @@ namespace SwingingPaint.BucketFluid.Core
 
         private void SetSimulationShaderParameters(float deltaTime)
         {
-            fluidComputeShader.SetInt(ParticleCountName, InitializedParticleCount);
-            fluidComputeShader.SetFloat(DeltaTimeName, deltaTime);
-            fluidComputeShader.SetVector(EffectiveLocalAccelerationName, motionProvider.EffectiveLocalAcceleration);
-            fluidComputeShader.SetFloat(DragName, settings.drag);
-            fluidComputeShader.SetFloat(MaxVelocityName, settings.maxVelocity);
-            fluidComputeShader.SetVector(BoundaryLocalCenterOffsetName, boundary.boundaryLocalCenterOffset);
-            fluidComputeShader.SetFloat(BottomYName, boundary.bottomY);
-            fluidComputeShader.SetFloat(TopYName, boundary.topY);
-            fluidComputeShader.SetFloat(BottomRadiusName, boundary.bottomRadius);
-            fluidComputeShader.SetFloat(TopRadiusName, boundary.topRadius);
-            fluidComputeShader.SetInt(ClampTopName, boundary.clampTop ? 1 : 0);
-            fluidComputeShader.SetFloat(WallDampingName, boundary.wallDamping);
-            fluidComputeShader.SetFloat(WallFrictionName, boundary.wallFriction);
-            fluidComputeShader.SetFloat(ParticleRadiusName, settings.particleRadius);
-            fluidComputeShader.SetFloat(SpatialCellSizeName, SpatialCellSize);
-            fluidComputeShader.SetInt(HashTableSizeName, _activeHashTableSize);
-            fluidComputeShader.SetInt(MaxParticlesPerCellName, _activeMaxParticlesPerCell);
+            fluidComputeShader.SetInt(ParticleCountId, InitializedParticleCount);
+            fluidComputeShader.SetFloat(DeltaTimeId, deltaTime);
+            fluidComputeShader.SetVector(EffectiveLocalAccelerationId, motionProvider.EffectiveLocalAcceleration);
+            fluidComputeShader.SetFloat(DragId, settings.drag);
+            fluidComputeShader.SetFloat(MaxVelocityId, settings.maxVelocity);
+            fluidComputeShader.SetVector(BoundaryLocalCenterOffsetId, boundary.boundaryLocalCenterOffset);
+            fluidComputeShader.SetFloat(BottomYId, boundary.bottomY);
+            fluidComputeShader.SetFloat(TopYId, boundary.topY);
+            fluidComputeShader.SetFloat(BottomRadiusId, boundary.bottomRadius);
+            fluidComputeShader.SetFloat(TopRadiusId, boundary.topRadius);
+            fluidComputeShader.SetInt(ClampTopId, boundary.clampTop ? 1 : 0);
+            fluidComputeShader.SetFloat(WallDampingId, boundary.wallDamping);
+            fluidComputeShader.SetFloat(WallFrictionId, boundary.wallFriction);
+            fluidComputeShader.SetFloat(ParticleRadiusId, settings.particleRadius);
+            fluidComputeShader.SetFloat(SmoothingRadiusId, settings.smoothingRadius);
+            fluidComputeShader.SetFloat(RestDensityId, settings.restDensity);
+            fluidComputeShader.SetFloat(PressureStiffnessId, settings.pressureStiffness);
+            fluidComputeShader.SetFloat(NearPressureStiffnessId, settings.nearPressureStiffness);
+            fluidComputeShader.SetFloat(ViscosityId, settings.viscosity);
+            fluidComputeShader.SetFloat(SurfaceTensionId, settings.surfaceTension);
+            fluidComputeShader.SetFloat(CohesionId, settings.cohesion);
+            fluidComputeShader.SetFloat(DampingId, settings.damping);
+            fluidComputeShader.SetFloat(SpatialCellSizeId, SpatialCellSize);
+            fluidComputeShader.SetInt(HashTableSizeId, _activeHashTableSize);
+            fluidComputeShader.SetInt(MaxParticlesPerCellId, _activeMaxParticlesPerCell);
 
-            fluidComputeShader.SetBuffer(_applyForcesKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_predictPositionsKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_resolveBoundaryKernel, ParticlesBufferName, _particleBuffer);
-            fluidComputeShader.SetBuffer(_updateParticlesKernel, ParticlesBufferName, _particleBuffer);
+            fluidComputeShader.SetBuffer(_applyForcesKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_predictPositionsKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_computeDensityKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_solveConstraintsKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_applyViscosityKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_resolveBoundaryKernel, ParticlesBufferId, _particleBuffer);
+            fluidComputeShader.SetBuffer(_updateParticlesKernel, ParticlesBufferId, _particleBuffer);
 
             if (SpatialGridBufferValid)
             {
-                fluidComputeShader.SetBuffer(_clearSpatialGridKernel, CellParticleCountsBufferName, _cellParticleCounts);
-                fluidComputeShader.SetBuffer(_clearSpatialGridKernel, SpatialGridCountersBufferName, _spatialGridCounters);
+                fluidComputeShader.SetBuffer(_clearSpatialGridKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_clearSpatialGridKernel, SpatialGridCountersBufferId, _spatialGridCounters);
 
-                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, ParticlesBufferName, _particleBuffer);
-                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, CellParticleCountsBufferName, _cellParticleCounts);
-                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, CellParticleIndicesBufferName, _cellParticleIndices);
-                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, SpatialGridCountersBufferName, _spatialGridCounters);
+                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, ParticlesBufferId, _particleBuffer);
+                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, CellParticleIndicesBufferId, _cellParticleIndices);
+                fluidComputeShader.SetBuffer(_buildSpatialGridKernel, SpatialGridCountersBufferId, _spatialGridCounters);
+
+                fluidComputeShader.SetBuffer(_computeDensityKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_computeDensityKernel, CellParticleIndicesBufferId, _cellParticleIndices);
+
+                fluidComputeShader.SetBuffer(_solveConstraintsKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_solveConstraintsKernel, CellParticleIndicesBufferId, _cellParticleIndices);
+
+                fluidComputeShader.SetBuffer(_applyViscosityKernel, CellParticleCountsBufferId, _cellParticleCounts);
+                fluidComputeShader.SetBuffer(_applyViscosityKernel, CellParticleIndicesBufferId, _cellParticleIndices);
             }
         }
 
@@ -681,6 +899,111 @@ namespace SwingingPaint.BucketFluid.Core
                     Debug.LogWarning(
                         $"Spatial grid overflowed by {SpatialGridOverflowCount} particles. " +
                         "Increase hashTableSize or maxParticlesPerCell before enabling density/pressure.",
+                        this
+                    );
+                }
+            });
+        }
+
+        private void RequestParticleValidationReadback()
+        {
+            if (!Application.isPlaying ||
+                settings == null ||
+                !settings.enableDebug ||
+                _particleBuffer == null ||
+                !_particleBuffer.IsValid() ||
+                _particleValidationReadbackPending ||
+                Time.unscaledTime < _nextParticleValidationReadbackTime)
+            {
+                return;
+            }
+
+            ComputeBuffer requestedBuffer = _particleBuffer;
+            _particleValidationReadbackPending = true;
+            _nextParticleValidationReadbackTime = Time.unscaledTime + Mathf.Max(0.05f, particleValidationReadbackInterval);
+
+            AsyncGPUReadback.Request(requestedBuffer, request =>
+            {
+                _particleValidationReadbackPending = false;
+
+                if (request.hasError || requestedBuffer == null || requestedBuffer != _particleBuffer)
+                {
+                    return;
+                }
+
+                var data = request.GetData<FluidParticle>();
+                int activeCount = 0;
+                int invalidCount = 0;
+                int boundaryLeakCount = 0;
+                float maxVelocity = 0f;
+                double densityTotal = 0d;
+
+                int particleCount = Mathf.Min(InitializedParticleCount, data.Length);
+                for (int i = 0; i < particleCount; i++)
+                {
+                    FluidParticle particle = data[i];
+                    if (particle.active == 0)
+                    {
+                        continue;
+                    }
+
+                    activeCount++;
+
+                    bool invalid =
+                        !IsFinite(particle.positionLocal) ||
+                        !IsFinite(particle.predictedPositionLocal) ||
+                        !IsFinite(particle.velocityLocal) ||
+                        !IsFinite(particle.density) ||
+                        !IsFinite(particle.nearDensity);
+
+                    if (invalid)
+                    {
+                        invalidCount++;
+                        continue;
+                    }
+
+                    float velocityMagnitude = particle.velocityLocal.magnitude;
+                    maxVelocity = Mathf.Max(maxVelocity, velocityMagnitude);
+                    densityTotal += particle.density;
+
+                    if (settings != null &&
+                        settings.maxVelocity > 0f &&
+                        velocityMagnitude > settings.maxVelocity * 1.25f)
+                    {
+                        invalidCount++;
+                    }
+
+                    if (boundary != null &&
+                        settings != null &&
+                        !boundary.IsInsideWithRadius(particle.positionLocal, settings.particleRadius))
+                    {
+                        boundaryLeakCount++;
+                    }
+                }
+
+                RuntimeActiveParticleCount = activeCount;
+                InvalidParticleCount = invalidCount;
+                BoundaryLeakCount = boundaryLeakCount;
+                MaxObservedVelocity = maxVelocity;
+                AverageObservedDensity = activeCount > 0 ? (float)(densityTotal / activeCount) : 0f;
+                ParticleValidationAvailable = true;
+
+                if (InvalidParticleCount > 0 && !_hasWarnedInvalidParticles)
+                {
+                    _hasWarnedInvalidParticles = true;
+                    Debug.LogWarning(
+                        $"Fluid validation found {InvalidParticleCount} invalid particles. " +
+                        "The GPU solver will clamp invalid velocities, but settings may be too aggressive.",
+                        this
+                    );
+                }
+
+                if (BoundaryLeakCount > 0 && !_hasWarnedBoundaryLeaks)
+                {
+                    _hasWarnedBoundaryLeaks = true;
+                    Debug.LogWarning(
+                        $"Fluid validation found {BoundaryLeakCount} particles outside the bucket boundary. " +
+                        "Check bucket boundary dimensions, particle radius, and solver stability.",
                         this
                     );
                 }
@@ -1115,6 +1438,16 @@ namespace SwingingPaint.BucketFluid.Core
             return $"({value.x:F4}, {value.y:F4}, {value.z:F4})";
         }
 
+        private static bool IsFinite(Vector3 value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
         private static int CountActiveParticles(IReadOnlyList<FluidParticle> particles)
         {
             int count = 0;
@@ -1134,6 +1467,7 @@ namespace SwingingPaint.BucketFluid.Core
             hashTableSize = Mathf.Max(64, hashTableSize);
             maxParticlesPerCell = Mathf.Max(1, maxParticlesPerCell);
             spatialGridDebugReadbackInterval = Mathf.Max(0.05f, spatialGridDebugReadbackInterval);
+            particleValidationReadbackInterval = Mathf.Max(0.05f, particleValidationReadbackInterval);
         }
 
         private void ReleaseParticleBuffer()
@@ -1148,6 +1482,13 @@ namespace SwingingPaint.BucketFluid.Core
             InitializedParticleCount = 0;
             RuntimeActiveParticleCount = 0;
             IsInitialized = false;
+            _particleValidationReadbackPending = false;
+            _nextParticleValidationReadbackTime = 0f;
+            ParticleValidationAvailable = false;
+            InvalidParticleCount = 0;
+            BoundaryLeakCount = 0;
+            MaxObservedVelocity = 0f;
+            AverageObservedDensity = 0f;
         }
 
         private void ReleaseSpatialGridBuffers()

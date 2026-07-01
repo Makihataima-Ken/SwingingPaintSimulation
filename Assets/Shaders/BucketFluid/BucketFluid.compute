@@ -54,11 +54,22 @@ int ClampTop;
 float WallDamping;
 float WallFriction;
 float ParticleRadius;
+float SmoothingRadius;
+float RestDensity;
+float PressureStiffness;
+float NearPressureStiffness;
+float Viscosity;
+float SurfaceTension;
+float Cohesion;
+float Damping;
 float SpatialCellSize;
 uint HashTableSize;
 uint MaxParticlesPerCell;
 
 static const float BoundaryEpsilon = 0.00001;
+static const float PressureCorrectionScale = 0.006;
+static const float CohesionCorrectionScale = 0.025;
+static const float SurfaceTensionCorrectionScale = 0.012;
 
 float RadiusAtY(float y)
 {
@@ -70,6 +81,11 @@ float RadiusAtY(float y)
 
 float3 ClampVelocity(float3 velocity)
 {
+    if (!all(velocity == velocity) || !all(abs(velocity) < 1000000.0))
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
     float speed = length(velocity);
     if (MaxVelocity > 0.0 && speed > MaxVelocity)
     {
@@ -79,14 +95,57 @@ float3 ClampVelocity(float3 velocity)
     return velocity;
 }
 
+bool IsFinite3(float3 value)
+{
+    return all(value == value) && all(abs(value) < 1000000.0);
+}
+
+float3 FallbackDirection(uint particleIndex, uint neighborIndex)
+{
+    float seed = (float)(particleIndex * 1973u + neighborIndex * 9277u + 89173u);
+    float3 direction = frac(float3(seed * 0.1031, seed * 0.11369, seed * 0.13787)) - 0.5;
+    float lengthSq = dot(direction, direction);
+
+    if (lengthSq <= BoundaryEpsilon)
+    {
+        return float3(1.0, 0.0, 0.0);
+    }
+
+    return direction * rsqrt(lengthSq);
+}
+
+float3 ClampVectorLength(float3 value, float maxLength)
+{
+    float lengthSq = dot(value, value);
+    float safeMaxLength = max(0.0, maxLength);
+    float maxLengthSq = safeMaxLength * safeMaxLength;
+
+    if (safeMaxLength > 0.0 && lengthSq > maxLengthSq)
+    {
+        return value * rsqrt(max(lengthSq, BoundaryEpsilon)) * safeMaxLength;
+    }
+
+    return value;
+}
+
+float GetInteractionRadius()
+{
+    return max(SmoothingRadius, ParticleRadius * 2.1);
+}
+
+float GetTargetDensity()
+{
+    return max(1.0, RestDensity * 0.008);
+}
+
 void ResolveTruncatedConeBoundary(inout float3 position, inout float3 velocity)
 {
-    if (!all(position == position))
+    if (!IsFinite3(position))
     {
         position = BoundaryLocalCenterOffset + float3(0.0, BottomY + ParticleRadius, 0.0);
     }
 
-    if (!all(velocity == velocity))
+    if (!IsFinite3(velocity))
     {
         velocity = float3(0.0, 0.0, 0.0);
     }
@@ -139,7 +198,9 @@ void ResolveTruncatedConeBoundary(inout float3 position, inout float3 velocity)
         float2 radialDirection = horizontal / distance;
         position.xz = BoundaryLocalCenterOffset.xz + radialDirection * allowedRadius;
 
-        float3 normal = float3(radialDirection.x, 0.0, radialDirection.y);
+        float height = max(TopY - BottomY, BoundaryEpsilon);
+        float slope = (TopRadius - BottomRadius) / height;
+        float3 normal = normalize(float3(radialDirection.x, -slope, radialDirection.y));
         float outwardVelocity = dot(velocity, normal);
         float3 normalVelocity = normal * outwardVelocity;
         float3 tangentVelocity = velocity - normalVelocity;
@@ -208,6 +269,7 @@ void ApplyForces(uint3 id : SV_DispatchThreadID)
     particle.velocityLocal *= dragFactor;
 
     particle.velocityLocal = ClampVelocity(particle.velocityLocal);
+    particle.deltaPosition = float3(0.0, 0.0, 0.0);
 
     particles[id.x] = particle;
 }
@@ -227,6 +289,7 @@ void PredictPositions(uint3 id : SV_DispatchThreadID)
     }
 
     particle.predictedPositionLocal = particle.positionLocal + particle.velocityLocal * DeltaTime;
+    particle.deltaPosition = float3(0.0, 0.0, 0.0);
     particles[id.x] = particle;
 }
 
@@ -300,6 +363,75 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
+
+    FluidParticle particle = particles[id.x];
+    if (particle.active == 0)
+    {
+        return;
+    }
+
+    if (!IsFinite3(particle.predictedPositionLocal))
+    {
+        particle.predictedPositionLocal = particle.positionLocal;
+    }
+
+    float interactionRadius = GetInteractionRadius();
+    float interactionRadiusSq = interactionRadius * interactionRadius;
+    float density = 0.0;
+    float nearDensity = 0.0;
+    int3 centerCell = GetCellCoord(particle.predictedPositionLocal);
+
+    [loop]
+    for (int z = -1; z <= 1; z++)
+    {
+        [loop]
+        for (int y = -1; y <= 1; y++)
+        {
+            [loop]
+            for (int x = -1; x <= 1; x++)
+            {
+                uint cell = CellIndex(centerCell + int3(x, y, z));
+                uint count = min(cellParticleCounts[cell], MaxParticlesPerCell);
+
+                [loop]
+                for (uint slot = 0u; slot < count; slot++)
+                {
+                    uint neighborIndex = cellParticleIndices[cell * MaxParticlesPerCell + slot];
+                    if (neighborIndex >= _ParticleCount)
+                    {
+                        continue;
+                    }
+
+                    FluidParticle neighbor = particles[neighborIndex];
+                    if (neighbor.active == 0)
+                    {
+                        continue;
+                    }
+
+                    float3 offset = particle.predictedPositionLocal - neighbor.predictedPositionLocal;
+                    float distanceSq = dot(offset, offset);
+
+                    if (distanceSq > interactionRadiusSq)
+                    {
+                        continue;
+                    }
+
+                    float distance = sqrt(max(distanceSq, 0.0));
+                    float q = saturate(1.0 - distance / interactionRadius);
+                    float q2 = q * q;
+                    density += q2 * q;
+                    nearDensity += q2 * q2;
+                }
+            }
+        }
+    }
+
+    float targetDensity = GetTargetDensity();
+    particle.density = max(density, BoundaryEpsilon);
+    particle.nearDensity = max(nearDensity, 0.0);
+    particle.pressure = max(0.0, particle.density - targetDensity) * PressureStiffness;
+    particle.nearPressure = max(0.0, particle.nearDensity - targetDensity * 0.45) * NearPressureStiffness;
+    particles[id.x] = particle;
 }
 
 [numthreads(64, 1, 1)]
@@ -309,6 +441,81 @@ void SolveConstraints(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
+
+    FluidParticle particle = particles[id.x];
+    if (particle.active == 0)
+    {
+        return;
+    }
+
+    float interactionRadius = GetInteractionRadius();
+    float interactionRadiusSq = interactionRadius * interactionRadius;
+    float targetDensity = GetTargetDensity();
+    float3 correction = float3(0.0, 0.0, 0.0);
+    int3 centerCell = GetCellCoord(particle.predictedPositionLocal);
+
+    [loop]
+    for (int z = -1; z <= 1; z++)
+    {
+        [loop]
+        for (int y = -1; y <= 1; y++)
+        {
+            [loop]
+            for (int x = -1; x <= 1; x++)
+            {
+                uint cell = CellIndex(centerCell + int3(x, y, z));
+                uint count = min(cellParticleCounts[cell], MaxParticlesPerCell);
+
+                [loop]
+                for (uint slot = 0u; slot < count; slot++)
+                {
+                    uint neighborIndex = cellParticleIndices[cell * MaxParticlesPerCell + slot];
+                    if (neighborIndex >= _ParticleCount || neighborIndex == id.x)
+                    {
+                        continue;
+                    }
+
+                    FluidParticle neighbor = particles[neighborIndex];
+                    if (neighbor.active == 0)
+                    {
+                        continue;
+                    }
+
+                    float3 offset = particle.predictedPositionLocal - neighbor.predictedPositionLocal;
+                    float distanceSq = dot(offset, offset);
+
+                    if (distanceSq > interactionRadiusSq)
+                    {
+                        continue;
+                    }
+
+                    float distance = sqrt(max(distanceSq, 0.0));
+                    float3 direction = distance > BoundaryEpsilon
+                        ? offset / distance
+                        : FallbackDirection(id.x, neighborIndex);
+
+                    float q = saturate(1.0 - distance / interactionRadius);
+                    float sharedPressure = (particle.pressure + neighbor.pressure) * 0.5;
+                    float sharedNearPressure = (particle.nearPressure + neighbor.nearPressure) * 0.5;
+                    float densityScale = 1.0 / max(targetDensity, particle.density + neighbor.density);
+                    float pressurePush = (sharedPressure * q + sharedNearPressure * q * q) * densityScale;
+                    correction += direction * pressurePush * PressureCorrectionScale * DeltaTime * DeltaTime;
+
+                    float cohesionPull = Cohesion * q * q * CohesionCorrectionScale * DeltaTime;
+                    correction -= direction * cohesionPull;
+
+                    float surfaceWeight = saturate(1.0 - particle.density / max(targetDensity, BoundaryEpsilon));
+                    float surfacePull = SurfaceTension * q * surfaceWeight * SurfaceTensionCorrectionScale * DeltaTime;
+                    correction -= direction * surfacePull;
+                }
+            }
+        }
+    }
+
+    correction = ClampVectorLength(correction, max(ParticleRadius * 0.65, interactionRadius * 0.18));
+    particle.deltaPosition = correction;
+    particle.predictedPositionLocal += correction;
+    particles[id.x] = particle;
 }
 
 [numthreads(64, 1, 1)]
@@ -318,6 +525,73 @@ void ApplyViscosity(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
+
+    FluidParticle particle = particles[id.x];
+    if (particle.active == 0)
+    {
+        return;
+    }
+
+    float interactionRadius = GetInteractionRadius();
+    float interactionRadiusSq = interactionRadius * interactionRadius;
+    float3 velocityDelta = float3(0.0, 0.0, 0.0);
+    float totalWeight = 0.0;
+    int3 centerCell = GetCellCoord(particle.predictedPositionLocal);
+
+    [loop]
+    for (int z = -1; z <= 1; z++)
+    {
+        [loop]
+        for (int y = -1; y <= 1; y++)
+        {
+            [loop]
+            for (int x = -1; x <= 1; x++)
+            {
+                uint cell = CellIndex(centerCell + int3(x, y, z));
+                uint count = min(cellParticleCounts[cell], MaxParticlesPerCell);
+
+                [loop]
+                for (uint slot = 0u; slot < count; slot++)
+                {
+                    uint neighborIndex = cellParticleIndices[cell * MaxParticlesPerCell + slot];
+                    if (neighborIndex >= _ParticleCount || neighborIndex == id.x)
+                    {
+                        continue;
+                    }
+
+                    FluidParticle neighbor = particles[neighborIndex];
+                    if (neighbor.active == 0)
+                    {
+                        continue;
+                    }
+
+                    float3 offset = particle.predictedPositionLocal - neighbor.predictedPositionLocal;
+                    float distanceSq = dot(offset, offset);
+
+                    if (distanceSq > interactionRadiusSq)
+                    {
+                        continue;
+                    }
+
+                    float distance = sqrt(max(distanceSq, 0.0));
+                    float q = saturate(1.0 - distance / interactionRadius);
+                    float weight = q * q;
+                    velocityDelta += (neighbor.velocityLocal - particle.velocityLocal) * weight;
+                    totalWeight += weight;
+                }
+            }
+        }
+    }
+
+    if (totalWeight > BoundaryEpsilon)
+    {
+        particle.velocityLocal += velocityDelta / totalWeight * Viscosity * DeltaTime;
+    }
+
+    float dampingFactor = max(0.0, 1.0 - Damping * DeltaTime);
+    particle.velocityLocal = ClampVelocity(particle.velocityLocal * dampingFactor);
+    particle.predictedPositionLocal = particle.positionLocal + particle.velocityLocal * DeltaTime;
+    particles[id.x] = particle;
 }
 
 [numthreads(64, 1, 1)]
@@ -352,6 +626,13 @@ void UpdateParticles(uint3 id : SV_DispatchThreadID)
         return;
     }
 
+    if (DeltaTime > BoundaryEpsilon)
+    {
+        float3 correctedVelocity = (particle.predictedPositionLocal - particle.positionLocal) / DeltaTime;
+        particle.velocityLocal = ClampVelocity(correctedVelocity);
+    }
+
     particle.positionLocal = particle.predictedPositionLocal;
+    particle.deltaPosition = float3(0.0, 0.0, 0.0);
     particles[id.x] = particle;
 }

@@ -1,4 +1,5 @@
 using SwingingPaint.BucketFluid.Core;
+using SwingingPaint.Paint;
 using UnityEngine;
 
 namespace SwingingPaint.BucketFluid.Rendering
@@ -15,10 +16,12 @@ namespace SwingingPaint.BucketFluid.Rendering
         public GPUFluidSimulator simulator;
         public BucketMotionProvider motionProvider;
         public GPUFluidRenderer fluidRenderer;
+        public PaintEmitter paintEmitter;
+        public GPUFluidOutflowController gpuOutflowController;
 
         [Header("Display")]
         public bool showPanel = true;
-        public Rect panelRect = new Rect(12f, 12f, 380f, 610f);
+        public Rect panelRect = new Rect(12f, 12f, 380f, 700f);
 
         private void Awake()
         {
@@ -74,9 +77,50 @@ namespace SwingingPaint.BucketFluid.Rendering
             GUILayout.Label($"Max Particles/Cell: {(simulator != null ? simulator.SpatialMaxParticlesPerCell : 0)}");
             GUILayout.Label($"Grid Inserted: {(simulator != null && simulator.SpatialGridCountersAvailable ? simulator.SpatialGridInsertedCount.ToString() : "n/a")}");
             GUILayout.Label($"Grid Overflow: {(simulator != null && simulator.SpatialGridCountersAvailable ? simulator.SpatialGridOverflowCount.ToString() : "n/a")}");
+            GUILayout.Label($"Validation Available: {simulator != null && simulator.ParticleValidationAvailable}");
+            GUILayout.Label($"Invalid Particles: {(simulator != null && simulator.ParticleValidationAvailable ? simulator.InvalidParticleCount.ToString() : "n/a")}");
+            GUILayout.Label($"Boundary Leaks: {(simulator != null && simulator.ParticleValidationAvailable ? simulator.BoundaryLeakCount.ToString() : "n/a")}");
+            GUILayout.Label($"Max Velocity: {(simulator != null && simulator.ParticleValidationAvailable ? simulator.MaxObservedVelocity.ToString("F2") : "n/a")}");
+            GUILayout.Label($"Average Density: {(simulator != null && simulator.ParticleValidationAvailable ? simulator.AverageObservedDensity.ToString("F2") : "n/a")}");
             GUILayout.Label($"Effective Accel: {FormatVector(motionProvider != null ? motionProvider.EffectiveLocalAcceleration : Vector3.zero)}");
             GUILayout.Label("Boundary Source: BucketFluidBoundary");
             GUILayout.Label($"Boundary Collision: {simulator != null && simulator.BoundaryCollisionEnabled}");
+            GUILayout.Label($"Paint Stream Enabled: {paintEmitter != null && paintEmitter.continuousStreamMode}");
+            GUILayout.Label($"Paint Render Mode: {(paintEmitter != null ? paintEmitter.renderMode.ToString() : "n/a")}");
+            GUILayout.Label($"Paint Emission Accumulator: {(paintEmitter != null ? paintEmitter.EmissionAccumulator : 0f):F4}");
+            GUILayout.Label($"Paint Emitted/Tick: {(paintEmitter != null ? paintEmitter.LastEmittedParticlesPerTick : 0)}");
+            GUILayout.Label($"Active Falling Paint: {(paintEmitter != null ? paintEmitter.ActiveDropletCount : 0)}");
+            GUILayout.Label($"Stream Segments: {(paintEmitter != null ? paintEmitter.StreamRenderSegments : 0)}");
+            GUILayout.Label($"Avg Stream Spacing: {(paintEmitter != null ? paintEmitter.AverageStreamSpacing : 0f):F4}");
+            GUILayout.Label($"Max Stream Spacing: {(paintEmitter != null ? paintEmitter.MaxStreamSpacing : 0f):F4}");
+            GUILayout.Label($"Broken Stream Segments: {(paintEmitter != null ? paintEmitter.BrokenStreamSegmentCount : 0)}");
+            GUILayout.Label($"Avg Falling Speed: {(paintEmitter != null ? paintEmitter.AverageFallingSpeed : 0f):F3}");
+            GUILayout.Label($"Adaptive Break Distance: {(paintEmitter != null ? paintEmitter.CurrentAdaptiveBreakDistance : 0f):F4}");
+            GUILayout.Label($"Current Flow Rate: {(paintEmitter != null ? paintEmitter.CurrentFlowRate : 0f):F3}");
+            GUILayout.Label($"Remaining Paint: {(paintEmitter != null ? paintEmitter.RemainingPaintQuantity : 0f):F3}");
+            GUILayout.Label($"Falling Stream Physics: {(paintEmitter != null ? paintEmitter.fallingStreamPhysicsMode.ToString() : "n/a")}");
+            GUILayout.Label($"Stream Neighbors: {(paintEmitter != null ? paintEmitter.FallingStreamNeighborCount : 0)}");
+            GUILayout.Label($"Avg Falling Density: {(paintEmitter != null ? paintEmitter.AverageStreamDensity : 0f):F3}");
+            GUILayout.Label($"Max Falling Density: {(paintEmitter != null ? paintEmitter.MaxStreamDensity : 0f):F3}");
+            GUILayout.Label($"Deposits/Tick: {(paintEmitter != null ? paintEmitter.DepositsThisTick : 0)}");
+            GUILayout.Label($"Canvas Flushed/Tick: {paintEmitter != null && paintEmitter.CanvasFlushedThisTick}");
+            GUILayout.Label($"Surface Contact Mode: {paintEmitter != null && paintEmitter.SurfaceContactModeEnabled}");
+            GUILayout.Label($"Last Contact Radius: {(paintEmitter != null ? paintEmitter.LastCanvasContactRadius : 0f):F4}");
+            GUILayout.Label($"Last Contact Prediction: {(paintEmitter != null ? paintEmitter.LastCanvasContactPredictionDistance : 0f):F4}");
+            GUILayout.Label($"Predicted Contacts/Tick: {(paintEmitter != null ? paintEmitter.PredictedCanvasContactsThisTick : 0)}");
+            GUILayout.Label($"Canvas Dirty Before Render: {paintEmitter != null && paintEmitter.CanvasTextureDirtyBeforeRender}");
+            GUILayout.Label($"GPU Outflow Enabled: {gpuOutflowController != null && gpuOutflowController.gpuOutflowEnabled}");
+            GUILayout.Label($"GPU Outflow Capacity: {(gpuOutflowController != null ? gpuOutflowController.OutflowCapacity : 0)}");
+            GUILayout.Label($"GPU Outflow Active: {(gpuOutflowController != null ? gpuOutflowController.ActiveOutflowParticles : 0)}");
+            GUILayout.Label($"GPU Extraction Budget/Substep: {(gpuOutflowController != null ? gpuOutflowController.CurrentExtractionBudget : 0)}");
+            GUILayout.Label($"GPU Outflow Radius: {(gpuOutflowController != null ? gpuOutflowController.EffectiveOutflowParticleRadius : 0f):F4}");
+            GUILayout.Label($"GPU Drain Capture Radius: {(gpuOutflowController != null ? gpuOutflowController.EffectiveDrainCaptureRadius : 0f):F4}");
+            GUILayout.Label($"GPU Outflow Emitted/Tick: {(gpuOutflowController != null ? gpuOutflowController.EmittedParticlesThisTick : 0)}");
+            GUILayout.Label($"GPU Outflow Impacts/Tick: {(gpuOutflowController != null ? gpuOutflowController.DepositedImpactsThisTick : 0)}");
+            GUILayout.Label($"GPU Canvas Writes/Tick: {(gpuOutflowController != null ? gpuOutflowController.CanvasGpuWritesThisTick : 0)}");
+            GUILayout.Label($"GPU Stream Connectors: {(gpuOutflowController != null ? gpuOutflowController.StreamConnectorCount : 0)}");
+            GUILayout.Label($"GPU Outflow Overflow/Tick: {(gpuOutflowController != null ? gpuOutflowController.BufferOverflowThisTick : 0)}");
+            GUILayout.Label($"GPU Outflow Avg Density: {(gpuOutflowController != null ? gpuOutflowController.AverageOutflowDensity : 0f):F3}");
 
             if (simulator != null && simulator.boundary != null)
             {
@@ -149,6 +193,26 @@ namespace SwingingPaint.BucketFluid.Rendering
             if (fluidRenderer == null)
             {
                 fluidRenderer = GetComponentInParent<GPUFluidRenderer>();
+            }
+
+            if (paintEmitter == null)
+            {
+                paintEmitter = GetComponentInChildren<PaintEmitter>();
+            }
+
+            if (paintEmitter == null)
+            {
+                paintEmitter = GetComponentInParent<PaintEmitter>();
+            }
+
+            if (gpuOutflowController == null)
+            {
+                gpuOutflowController = GetComponentInChildren<GPUFluidOutflowController>();
+            }
+
+            if (gpuOutflowController == null)
+            {
+                gpuOutflowController = GetComponentInParent<GPUFluidOutflowController>();
             }
         }
 

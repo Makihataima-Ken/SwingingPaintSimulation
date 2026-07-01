@@ -37,6 +37,10 @@ namespace SwingingPaint.BucketFluid.Core
         public Color velocityGizmoColor = Color.cyan;
         public Color accelerationGizmoColor = new Color(1f, 0.35f, 0.05f, 1f);
 
+        [Header("Runtime Driving")]
+        [Tooltip("Skip this component's FixedUpdate loop when SimulationManager is driving fixed-step simulation.")]
+        public bool useSimulationManagerDriver = true;
+
         public Transform BucketTransform => bucketTransform != null ? bucketTransform : transform;
         public Matrix4x4 LocalToWorldMatrix => BucketTransform.localToWorldMatrix;
         public Matrix4x4 WorldToLocalMatrix => BucketTransform.worldToLocalMatrix;
@@ -75,8 +79,24 @@ namespace SwingingPaint.BucketFluid.Core
 
         private void FixedUpdate()
         {
-            ResolveReferences();
-            SampleMotion(Time.fixedDeltaTime);
+            if (useSimulationManagerDriver &&
+                SwingingPaint.Core.SimulationManager.Instance != null &&
+                SwingingPaint.Core.SimulationManager.Instance.driveFixedStepSimulation)
+            {
+                return;
+            }
+
+            StepMotion(Time.fixedDeltaTime);
+        }
+
+        public void StepMotion(float deltaTime)
+        {
+            if (settings == null)
+            {
+                ResolveReferences();
+            }
+
+            SampleMotion(deltaTime);
             UpdateLocalAccelerationVectors();
         }
 

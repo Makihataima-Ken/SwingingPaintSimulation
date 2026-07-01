@@ -1,11 +1,11 @@
 using UnityEngine;
 
 /// <summary>
-/// Draws a visual rope between an anchor point and BucketRig using a LineRenderer.
+/// Draws a visual rope between an anchor point and a bucket attachment point using a LineRenderer.
 ///
 /// This script is visual only. It does not use Rigidbody, Colliders, joints,
 /// raycasts, or Unity's built-in physics engine.
-/// BucketRig is the pendulum motion point; BucketModel is only the visual child.
+/// BucketRig is the pendulum motion point; RopeAttachment is the visual endpoint on the bucket.
 ///
 /// Because the Pendulum now moves BucketRig to the dynamic (stretched) rope length, the line
 /// between the anchor and the bucket already grows and shrinks on its own. This component is
@@ -20,8 +20,11 @@ public class RopeRenderer : MonoBehaviour
     [Tooltip("Anchor point where the rope starts. If empty, this GameObject is used.")]
     public Transform anchorTransform;
 
-    [Tooltip("BucketRig transform where the rope ends. Do not assign the visual BucketModel child.")]
+    [Tooltip("BucketRig transform moved by the custom pendulum. Used as fallback when no attachment point is assigned.")]
     public Transform bucketTransform;
+
+    [Tooltip("Visual bucket attachment point where the rope should end. Usually BucketRig/RopeAttachment.")]
+    public Transform attachmentTransform;
 
     [Tooltip("Optional pendulum reference used to auto-fill anchor and bucket transforms and to read rope stretch.")]
     public Pendulum pendulum;
@@ -69,7 +72,8 @@ public class RopeRenderer : MonoBehaviour
             ConfigureLineRenderer();
         }
 
-        if (anchorTransform == null || bucketTransform == null)
+        Transform ropeEnd = GetRopeEndTransform();
+        if (anchorTransform == null || ropeEnd == null)
         {
             return;
         }
@@ -115,18 +119,19 @@ public class RopeRenderer : MonoBehaviour
             return;
         }
 
-        float rest = pendulum.RestLength;
-        float current = pendulum.CurrentRopeLength;
-
-        // Extension ratio, normalised so 0 = rest length and 1 = "fully stretched".
+        // Tension ratio comes from the custom pendulum spring force. Fall back to extension ratio
+        // if an older pendulum state is present before the first simulation step.
         float denominator = Mathf.Max(0.0001f, fullStretchRatio);
-        float extensionRatio = rest > 0f ? Mathf.Clamp01((current / rest - 1f) / denominator) : 0f;
+        float extensionRatio = pendulum.RestLength > 0f
+            ? Mathf.Clamp01((pendulum.CurrentRopeLength / pendulum.RestLength - 1f) / denominator)
+            : 0f;
+        float tensionRatio = Mathf.Max(extensionRatio, pendulum.NormalizedRopeTension);
 
-        float width = ropeWidth * Mathf.Lerp(1f, stretchedWidthScale, extensionRatio);
+        float width = ropeWidth * Mathf.Lerp(1f, stretchedWidthScale, tensionRatio);
         _lineRenderer.startWidth = width;
         _lineRenderer.endWidth = width;
 
-        Color color = Color.Lerp(slackColor, stretchedColor, extensionRatio);
+        Color color = Color.Lerp(slackColor, stretchedColor, tensionRatio);
         _lineRenderer.startColor = color;
         _lineRenderer.endColor = color;
     }
@@ -151,10 +156,20 @@ public class RopeRenderer : MonoBehaviour
             }
         }
 
+        if (attachmentTransform == null && bucketTransform != null)
+        {
+            attachmentTransform = bucketTransform.Find("RopeAttachment");
+        }
+
         if (anchorTransform == null)
         {
             anchorTransform = transform;
         }
+    }
+
+    private Transform GetRopeEndTransform()
+    {
+        return attachmentTransform != null ? attachmentTransform : bucketTransform;
     }
 
     private void ConfigureLineRenderer()

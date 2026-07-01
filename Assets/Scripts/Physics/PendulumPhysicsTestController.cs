@@ -138,9 +138,12 @@ public class PendulumPhysicsTestController : MonoBehaviour
         PendulumTestPreset preset = presets[presetIndex];
 
         pendulum.ropeLength = Mathf.Max(0.01f, preset.ropeLength);
+        pendulum.motionMode = Pendulum.MotionMode.PlanarPendulum;
         pendulum.initialAngleDegrees = preset.initialAngleDegrees;
         pendulum.initialAngularVelocity = preset.initialAngularVelocity;
+        pendulum.initialLateralAngularVelocityDegrees = 0f;
         pendulum.directionAngleDegrees = preset.directionAngleDegrees;
+        pendulum.swingDirectionDegrees = preset.directionAngleDegrees;
         pendulum.damping = Mathf.Max(0f, preset.damping);
         pendulum.gravity = Mathf.Max(0f, preset.gravity);
         pendulum.ResetState(preset.initialAngleDegrees, preset.initialAngularVelocity);

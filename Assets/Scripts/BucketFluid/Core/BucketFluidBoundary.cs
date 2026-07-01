@@ -74,6 +74,38 @@ namespace SwingingPaint.BucketFluid.Core
             return Mathf.Lerp(bottomRadius, topRadius, Mathf.Clamp01(t));
         }
 
+        /// <summary>BucketRig-local center point of the rim plane.</summary>
+        public Vector3 GetTopCenterLocal()
+        {
+            return new Vector3(
+                boundaryLocalCenterOffset.x,
+                boundaryLocalCenterOffset.y + topY,
+                boundaryLocalCenterOffset.z
+            );
+        }
+
+        /// <summary>BucketRig-local center point of the bottom plane.</summary>
+        public Vector3 GetBottomCenterLocal()
+        {
+            return new Vector3(
+                boundaryLocalCenterOffset.x,
+                boundaryLocalCenterOffset.y + bottomY,
+                boundaryLocalCenterOffset.z
+            );
+        }
+
+        /// <summary>BucketRig-local default rope attachment point on the bucket rim.</summary>
+        public Vector3 GetRopeAttachmentLocal()
+        {
+            return GetTopCenterLocal();
+        }
+
+        /// <summary>BucketRig-local default paint emission point just below the bucket bottom.</summary>
+        public Vector3 GetPaintHoleLocal(float offsetBelowBottom)
+        {
+            return GetBottomCenterLocal() + Vector3.down * Mathf.Max(0f, offsetBelowBottom);
+        }
+
         /// <summary>
         /// True when the BucketRig-local point is within the truncated cone.
         /// </summary>
