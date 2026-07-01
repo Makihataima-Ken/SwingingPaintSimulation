@@ -20,8 +20,8 @@ namespace SwingingPaint.Core
     public class PresentationTuningControls : MonoBehaviour
     {
         [Header("00 - How To Use")]
-        [Tooltip("Keep enabled while tuning. Changing any value here applies it to PhysicsSettings, fluid, outflow, renderer, and canvas.")]
-        public bool autoApply = true;
+        [Tooltip("When enabled, changing values here applies them to PhysicsSettings, fluid, outflow, renderer, and canvas. Keep disabled when tuning lower-level components directly.")]
+        public bool autoApply = false;
 
         [Tooltip("Enable only when you intentionally want the component to search the scene and refill missing references.")]
         public bool autoResolveReferences = true;
@@ -93,15 +93,15 @@ namespace SwingingPaint.Core
 
         [Tooltip("Strength/opacity of deposited paint marks.")]
         [Range(0f, 2f)]
-        public float markOpacity = 0.85f;
+        public float markOpacity = 1f;
 
         [Tooltip("Extra spread caused by high flow rate.")]
         [Range(0f, 3f)]
-        public float flowSpreadBoost = 0.15f;
+        public float flowSpreadBoost = 0.4f;
 
         [Tooltip("Base spread multiplier for real paint deposition.")]
         [Range(0.05f, 3f)]
-        public float surfaceSpread = 1f;
+        public float surfaceSpread = 1.6f;
 
         [Tooltip("Organic edge/noise strength for paint marks.")]
         [Range(0f, 1f)]
@@ -158,11 +158,11 @@ namespace SwingingPaint.Core
 
         [Tooltip("Particle count for fast tuning. Needs Reset/Restart.")]
         [Min(1)]
-        public int developmentParticleCount = 2000;
+        public int developmentParticleCount = 1200;
 
         [Tooltip("Particle count for final presentation. Needs Reset/Restart and costs more GPU time.")]
         [Min(1)]
-        public int presentationParticleCount = 20000;
+        public int presentationParticleCount = 12000;
 
         private bool _runtimeReferencesApplied;
 
@@ -182,12 +182,10 @@ namespace SwingingPaint.Core
         {
             _runtimeReferencesApplied = false;
             ResolveReferences();
-            ApplyTuning(restartSimulation: false);
         }
 
         private void Start()
         {
-            ApplyTuning(restartSimulation: false);
             _runtimeReferencesApplied = outflowController != null && outflowRenderer != null;
         }
 

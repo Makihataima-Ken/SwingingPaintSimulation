@@ -8,6 +8,9 @@ using UnityEngine;
 /// </summary>
 public class BucketOrientationController : MonoBehaviour
 {
+    private const float MaxTwistIntegrationStep = 1f / 60f;
+    private const int MaxTwistIntegrationSubsteps = 8;
+
     [Header("References")]
     public Transform pivotPoint;
     public Transform bucketRig;
@@ -27,6 +30,23 @@ public class BucketOrientationController : MonoBehaviour
     public float rollAmount;
     public bool alignToRope = true;
 
+    [Header("Rope Axis Twist")]
+    [Tooltip("Adds an independent spin around the rope axis after the bucket has been aligned to the rope.")]
+    public bool enableRopeAxisTwist = true;
+    [Tooltip("Initial stored rope twist angle in degrees. Values beyond 360 are allowed.")]
+    public float initialTwistAngle;
+    [Tooltip("Initial spin speed around the rope axis in degrees per second. Reset/Restart reapplies this value.")]
+    public float initialTwistAngularVelocity = 360f;
+    [Tooltip("Torsional spring strength. Higher values reverse the spin sooner and faster.")]
+    [Min(0f)]
+    public float twistSpring = 0.45f;
+    [Tooltip("Damping applied to rope-axis twist angular velocity. Higher values settle faster.")]
+    [Min(0f)]
+    public float twistDamping = 0.08f;
+    [Tooltip("Safety cap for rope-axis twist speed in degrees per second.")]
+    [Min(0f)]
+    public float maxTwistAngularVelocity = 720f;
+
     [Header("Gizmos")]
     public bool drawGizmos = true;
     [Min(0f)]
@@ -39,11 +59,16 @@ public class BucketOrientationController : MonoBehaviour
     public Vector3 CurrentRopeDirection { get; private set; } = Vector3.down;
     public Quaternion CurrentTargetRotation { get; private set; } = Quaternion.identity;
     public Vector3 CurrentForwardDirection { get; private set; } = Vector3.forward;
+    public float CurrentTwistAngle => _currentTwistAngle;
+    public float CurrentVisualTwistAngle => WrapTwistAngle(_currentTwistAngle);
+    public float CurrentTwistAngularVelocity => _currentTwistAngularVelocity;
 
     private Vector3 _previousForward;
     private Vector3 _previousPosition;
     private bool _hasForward;
     private bool _hasPosition;
+    private float _currentTwistAngle;
+    private float _currentTwistAngularVelocity;
 
     private void Awake()
     {
@@ -95,7 +120,9 @@ public class BucketOrientationController : MonoBehaviour
         Vector3 targetUp = -ropeDirection;
         Vector3 bucketVelocity = GetBucketVelocity(target, deltaTime);
         Vector3 forward = GetStableForward(target, targetUp, bucketVelocity);
-        Quaternion targetRotation = BuildTargetRotation(forward, targetUp);
+        StepTwist(deltaTime);
+        Quaternion baseRotation = BuildTargetRotation(forward, targetUp);
+        Quaternion targetRotation = ApplyRopeAxisTwist(baseRotation, targetUp);
 
         CurrentRopeDirection = ropeDirection;
         CurrentForwardDirection = forward;
@@ -111,7 +138,7 @@ public class BucketOrientationController : MonoBehaviour
             target.rotation = Quaternion.Slerp(target.rotation, targetRotation, Mathf.Clamp01(blend));
         }
 
-        _previousForward = ProjectOntoPlane(target.TransformDirection(GetSafeLocalForwardAxis()), targetUp);
+        _previousForward = ProjectOntoPlane(enableRopeAxisTwist ? forward : target.TransformDirection(GetSafeLocalForwardAxis()), targetUp);
         if (_previousForward.sqrMagnitude <= 0.000001f)
         {
             _previousForward = forward;
@@ -133,9 +160,11 @@ public class BucketOrientationController : MonoBehaviour
         {
             _hasForward = false;
             _hasPosition = false;
+            ResetTwistState();
             return;
         }
 
+        ResetTwistState();
         _previousPosition = target.position;
         _hasPosition = true;
         _previousForward = ProjectOntoPlane(target.TransformDirection(GetSafeLocalForwardAxis()), GetInitialTargetUp(target));
@@ -254,6 +283,63 @@ public class BucketOrientationController : MonoBehaviour
         return targetRotation;
     }
 
+    private Quaternion ApplyRopeAxisTwist(Quaternion baseRotation, Vector3 targetUp)
+    {
+        float visualTwistAngle = WrapTwistAngle(_currentTwistAngle);
+        if (!enableRopeAxisTwist || Mathf.Abs(visualTwistAngle) <= 0.0001f || targetUp.sqrMagnitude <= 0.000001f)
+        {
+            return baseRotation;
+        }
+
+        return Quaternion.AngleAxis(visualTwistAngle, targetUp.normalized) * baseRotation;
+    }
+
+    private void StepTwist(float deltaTime)
+    {
+        if (!enableRopeAxisTwist)
+        {
+            _currentTwistAngle = 0f;
+            _currentTwistAngularVelocity = 0f;
+            return;
+        }
+
+        if (deltaTime <= Mathf.Epsilon)
+        {
+            return;
+        }
+
+        int substeps = Mathf.Clamp(
+            Mathf.CeilToInt(deltaTime / MaxTwistIntegrationStep),
+            1,
+            MaxTwistIntegrationSubsteps);
+        float step = deltaTime / substeps;
+
+        for (int i = 0; i < substeps; i++)
+        {
+            float angularAcceleration = -twistSpring * _currentTwistAngle -
+                                        twistDamping * _currentTwistAngularVelocity;
+            _currentTwistAngularVelocity += angularAcceleration * step;
+            _currentTwistAngularVelocity = Mathf.Clamp(
+                _currentTwistAngularVelocity,
+                -maxTwistAngularVelocity,
+                maxTwistAngularVelocity);
+            _currentTwistAngle += _currentTwistAngularVelocity * step;
+        }
+    }
+
+    private void ResetTwistState()
+    {
+        _currentTwistAngle = enableRopeAxisTwist ? initialTwistAngle : 0f;
+        _currentTwistAngularVelocity = enableRopeAxisTwist
+            ? Mathf.Clamp(initialTwistAngularVelocity, -maxTwistAngularVelocity, maxTwistAngularVelocity)
+            : 0f;
+    }
+
+    private static float WrapTwistAngle(float angle)
+    {
+        return Mathf.Repeat(angle + 180f, 360f) - 180f;
+    }
+
     private Vector3 GetInitialTargetUp(Transform target)
     {
         Vector3 ropeDirection = GetRopeDirection(target);
@@ -305,6 +391,13 @@ public class BucketOrientationController : MonoBehaviour
     {
         rotationSmoothSpeed = Mathf.Max(0f, rotationSmoothSpeed);
         maxVisualLagAngle = Mathf.Max(0f, maxVisualLagAngle);
+        twistDamping = Mathf.Max(0f, twistDamping);
+        twistSpring = Mathf.Max(0f, twistSpring);
+        maxTwistAngularVelocity = Mathf.Max(0f, maxTwistAngularVelocity);
+        initialTwistAngularVelocity = Mathf.Clamp(
+            initialTwistAngularVelocity,
+            -maxTwistAngularVelocity,
+            maxTwistAngularVelocity);
         gizmoLength = Mathf.Max(0f, gizmoLength);
     }
 

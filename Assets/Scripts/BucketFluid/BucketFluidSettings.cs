@@ -15,12 +15,12 @@ namespace SwingingPaint.BucketFluid
         // show less detail in waves, splashes, and surface shape.
         [Header("Particle Count")]
         [Tooltip("Lightweight particle count for development and tuning.")]
-        public int developmentParticleCount = 2000;
+        public int developmentParticleCount = 1200;
 
         // High-detail particle count for final presentation. More particles improve visual
         // continuity and fluid mass, but require significantly more GPU work.
         [Tooltip("High-detail particle count for presentation mode.")]
-        public int presentationParticleCount = 20000;
+        public int presentationParticleCount = 12000;
 
         // Switches between development and presentation counts without changing tuned values.
         [Tooltip("Use presentationParticleCount instead of developmentParticleCount.")]
@@ -86,12 +86,12 @@ namespace SwingingPaint.BucketFluid
         // bucket movement at a higher GPU cost.
         [Header("Solver")]
         [Tooltip("Fixed simulation substeps per rendered frame.")]
-        public int substeps = 2;
+        public int substeps = 1;
 
         // Constraint/pressure refinement passes per substep. More iterations improve volume
         // preservation and reduce particle overlap.
         [Tooltip("Solver refinement iterations per substep.")]
-        public int solverIterations = 4;
+        public int solverIterations = 3;
 
         // Velocity safety clamp. This prevents unstable particles from gaining extreme speeds
         // when the bucket moves sharply.

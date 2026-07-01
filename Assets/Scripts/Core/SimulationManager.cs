@@ -44,11 +44,11 @@ namespace SwingingPaint.Core
         [Tooltip("Development fallback only. Keep off for the final project so failed GPU paint does not produce misleading output.")]
         public bool allowCpuPaintFallback = false;
         [Min(0.001f)]
-        public float fixedTimestep = 1f / 60f;
+        public float fixedTimestep = 1f / 45f;
         [Min(1)]
-        public int maxStepsPerRenderedFrame = 4;
+        public int maxStepsPerRenderedFrame = 2;
         [Tooltip("Maximum simulated time kept in the accumulator after a frame hitch.")]
-        public float maxAccumulatedTime = 0.12f;
+        public float maxAccumulatedTime = 0.05f;
 
         private bool _isPaused = false;
         private float _initialAngle;
