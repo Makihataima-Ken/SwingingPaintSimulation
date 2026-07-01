@@ -127,6 +127,9 @@ namespace SwingingPaint.Core
         /// </summary>
         public event Action OnSettingsChanged;
 
+        [NonSerialized] private Color _lastValidatedPaintColor;
+        [NonSerialized] private bool _hasValidatedPaintColor;
+
         // ------------------------------------------------------------------
         // Setters (fire event on change)
         // ------------------------------------------------------------------
@@ -252,6 +255,7 @@ namespace SwingingPaint.Core
 
             if (paintColor == value) return;
             paintColor = value;
+            CacheValidatedPaintColor();
             NotifyChanged();
         }
 
@@ -280,6 +284,11 @@ namespace SwingingPaint.Core
         // Validation
         // ------------------------------------------------------------------
 
+        private void OnEnable()
+        {
+            CacheValidatedPaintColor();
+        }
+
         private void OnValidate()
         {
             // Ensure all values are within safe ranges when edited in the Inspector
@@ -303,6 +312,20 @@ namespace SwingingPaint.Core
             paintHoleDiameter = Mathf.Max(0f, paintHoleDiameter);
             surfaceAbsorption = Mathf.Max(0f, surfaceAbsorption);
             paintSpreadRadius = Mathf.Max(0.01f, paintSpreadRadius);
+
+            bool paintColorChanged = !_hasValidatedPaintColor || paintColor != _lastValidatedPaintColor;
+            CacheValidatedPaintColor();
+
+            if (Application.isPlaying && paintColorChanged)
+            {
+                NotifyChanged();
+            }
+        }
+
+        private void CacheValidatedPaintColor()
+        {
+            _lastValidatedPaintColor = paintColor;
+            _hasValidatedPaintColor = true;
         }
 
         private void NotifyChanged()

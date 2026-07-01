@@ -1313,7 +1313,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c2db353a2be443578475d8596bfefb43, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  autoApply: 0
+  autoApply: 1
   autoResolveReferences: 1
   simulationManager: {fileID: 48000003}
   physicsSettings: {fileID: 11400000, guid: 6d3641a49fd24e6e8078197debdc1eb4, type: 2}

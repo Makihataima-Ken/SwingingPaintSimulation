@@ -194,6 +194,15 @@ namespace SwingingPaint.BucketFluid
         /// </summary>
         public int ParticleCount => ActiveParticleCount;
 
+        [System.NonSerialized] private Color _lastValidatedPaintColor;
+        [System.NonSerialized] private float _lastValidatedOpacity;
+        [System.NonSerialized] private bool _hasValidatedPaintAppearance;
+
+        private void OnEnable()
+        {
+            CacheValidatedPaintAppearance();
+        }
+
         private void OnValidate()
         {
             useGPU = true;
@@ -238,6 +247,42 @@ namespace SwingingPaint.BucketFluid
             opacity = Mathf.Clamp01(opacity);
             smoothness = Mathf.Clamp01(smoothness);
             metallic = Mathf.Clamp01(metallic);
+
+            bool paintAppearanceChanged = _hasValidatedPaintAppearance &&
+                                          (paintColor != _lastValidatedPaintColor ||
+                                           !Mathf.Approximately(opacity, _lastValidatedOpacity));
+            CacheValidatedPaintAppearance();
+
+            if (Application.isPlaying && paintAppearanceChanged)
+            {
+                SyncPaintAppearanceToPhysicsSettings();
+            }
+        }
+
+        private void CacheValidatedPaintAppearance()
+        {
+            _lastValidatedPaintColor = paintColor;
+            _lastValidatedOpacity = opacity;
+            _hasValidatedPaintAppearance = true;
+        }
+
+        private void SyncPaintAppearanceToPhysicsSettings()
+        {
+            SwingingPaint.Core.PhysicsSettings physicsSettings = null;
+
+            if (SwingingPaint.Core.SimulationManager.Instance != null)
+            {
+                physicsSettings = SwingingPaint.Core.SimulationManager.Instance.physicsSettings;
+            }
+
+            if (physicsSettings == null)
+            {
+                return;
+            }
+
+            Color syncedColor = paintColor;
+            syncedColor.a = opacity;
+            physicsSettings.SetPaintColor(syncedColor);
         }
     }
 }

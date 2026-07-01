@@ -88,7 +88,7 @@ public class Pendulum : MonoBehaviour
 
     [Header("Spring Rope Simulation")]
     [Tooltip("Number of point-mass particles used to build the rope. More particles make the rope shape smoother.")]
-    public int ropeParticleCount = 18;
+    public int ropeParticleCount = 8;
 
     [Tooltip("Mass distributed along the rope, excluding the bucket mass.")]
     public float ropeMass = 0.25f;
