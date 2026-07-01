@@ -38,16 +38,16 @@ namespace SwingingPaint.Surface
 
         [Header("Paint Behavior")]
         [Min(0.001f)]
-        public float minImpactRadius = 0.025f;
+        public float minImpactRadius = 0.04f;
         [Min(0.001f)]
         public float maxImpactRadius = 0.45f;
         [Range(0f, 2f)]
-        public float opacityMultiplier = 0.85f;
+        public float opacityMultiplier = 1f;
         [Range(0f, 3f)]
-        public float flowSpreadBoost = 0.15f;
+        public float flowSpreadBoost = 0.4f;
         [Tooltip("Base spread multiplier for deposited paint. Higher values create wider marks.")]
         [Range(0.05f, 3f)]
-        public float surfaceSpread = 1f;
+        public float surfaceSpread = 1.6f;
         [Tooltip("Irregular edge strength. 0 gives clean ellipses; higher values create organic paint edges.")]
         [Range(0f, 1f)]
         public float edgeIrregularity = 0.45f;

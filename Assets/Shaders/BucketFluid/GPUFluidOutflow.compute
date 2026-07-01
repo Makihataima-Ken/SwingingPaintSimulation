@@ -92,6 +92,20 @@ float3 HoleLocalPosition;
 float3 EmitLocalPosition;
 float3 HoleLocalDirection;
 float HoleRadius;
+uint HoleCount;
+float3 HoleLocalPosition0;
+float3 HoleLocalPosition1;
+float3 HoleLocalPosition2;
+float3 HoleLocalPosition3;
+float3 EmitLocalPosition0;
+float3 EmitLocalPosition1;
+float3 EmitLocalPosition2;
+float3 EmitLocalPosition3;
+float3 HoleLocalDirection0;
+float3 HoleLocalDirection1;
+float3 HoleLocalDirection2;
+float3 HoleLocalDirection3;
+float4 HoleRadii;
 float BucketParticleRadius;
 float ParticleRadius;
 float PaintFlowRate;
@@ -279,6 +293,82 @@ bool TryGetCanvasUV(float3 worldPosition, out float2 uv)
     return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
 }
 
+void DepositCanvasBrushStamp(
+    float2 uv,
+    float radius,
+    float4 color,
+    float amount,
+    float wetness,
+    float3 impactVelocityWorld,
+    float opacityScale,
+    float radiusScale)
+{
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+    {
+        return;
+    }
+
+    int width = max(CanvasTextureWidth, 1);
+    int height = max(CanvasTextureHeight, 1);
+    int2 center = int2(round(uv.x * (width - 1)), round(uv.y * (height - 1)));
+
+    float impactSpeed = length(impactVelocityWorld);
+    float viscosityFactor = 1.0 / (1.0 + max(0.0, Viscosity));
+    float impactFactor = saturate(impactSpeed / max(MaxFallingSpeed, 0.001));
+    float flowFactor = 1.0 + max(0.0, PaintFlowRate) * CanvasFlowSpreadBoost + impactFactor * 0.75;
+    float absorptionFactor = saturate(1.0 - CanvasAbsorption * 0.75);
+    float spreadWorldRadius = radius * max(0.05, CanvasSurfaceSpread) * lerp(1.05, 2.7, viscosityFactor) * flowFactor * absorptionFactor;
+    spreadWorldRadius = clamp(spreadWorldRadius * max(0.05, radiusScale), CanvasMinImpactRadius, CanvasMaxImpactRadius);
+
+    float2 safeCanvasSize = max(CanvasWorldSize, float2(0.001, 0.001));
+    int radiusPixelsX = max(1, (int)ceil(spreadWorldRadius / safeCanvasSize.x * width));
+    int radiusPixelsY = max(1, (int)ceil(spreadWorldRadius / safeCanvasSize.y * height));
+    float opacity = saturate(color.a * wetness * max(0.05, amount) * CanvasOpacityMultiplier * max(0.0, opacityScale));
+    float3 localVelocity = mul(CanvasWorldToLocal, float4(impactVelocityWorld, 0.0)).xyz;
+    float2 tangentDirection = dot(localVelocity.xz, localVelocity.xz) > Epsilon
+        ? normalize(localVelocity.xz)
+        : float2(1.0, 0.0);
+    float2 crossDirection = float2(-tangentDirection.y, tangentDirection.x);
+    float stretch = lerp(1.0, max(1.0, CanvasDirectionalStretch), impactFactor);
+
+    [loop]
+    for (int y = -radiusPixelsY; y <= radiusPixelsY; y++)
+    {
+        [loop]
+        for (int x = -radiusPixelsX; x <= radiusPixelsX; x++)
+        {
+            int2 pixel = center + int2(x, y);
+            if (pixel.x < 0 || pixel.y < 0 || pixel.x >= width || pixel.y >= height)
+            {
+                continue;
+            }
+
+            float2 normalized = float2(
+                (float)x / max(1.0, (float)radiusPixelsX),
+                (float)y / max(1.0, (float)radiusPixelsY));
+            float along = dot(normalized, tangentDirection);
+            float across = dot(normalized, crossDirection);
+            float distance = sqrt(across * across + (along * along) / max(1.0, stretch * stretch));
+            uint edgeSeed = (uint)(pixel.x * 1973 + pixel.y * 9277) + FrameIndex * 26699u;
+            float edgeNoise = (Hash01(edgeSeed) - 0.5) *
+                saturate(CanvasEdgeIrregularity) * 0.42;
+            float edgeLimit = 1.0 + edgeNoise;
+            if (distance > edgeLimit)
+            {
+                continue;
+            }
+
+            float falloff = saturate(1.0 - distance / max(edgeLimit, 0.1));
+            falloff *= falloff;
+            float alpha = saturate(opacity * falloff * (1.0 - CanvasAbsorption * 0.4));
+            float4 existing = canvasTexture[pixel];
+            float3 blended = lerp(existing.rgb, color.rgb, alpha);
+            canvasTexture[pixel] = float4(blended, saturate(existing.a + alpha * 0.75));
+            InterlockedAdd(outflowCounters[4], 1u);
+        }
+    }
+}
+
 void DepositCanvasSplat(float2 uv, float radius, float4 color, float amount, float wetness, float3 impactVelocityWorld)
 {
     int width = max(CanvasTextureWidth, 1);
@@ -415,6 +505,147 @@ void DepositCanvasSplat(float2 uv, float radius, float4 color, float amount, flo
     }
 }
 
+void DepositCanvasStroke(
+    float3 previousWorldPosition,
+    float3 currentWorldPosition,
+    float2 impactUv,
+    float radius,
+    float4 color,
+    float amount,
+    float wetness,
+    float3 impactVelocityWorld)
+{
+    float2 safeCanvasSize = max(CanvasWorldSize, float2(0.001, 0.001));
+    float3 previousLocal = mul(CanvasWorldToLocal, float4(previousWorldPosition, 1.0)).xyz;
+    float3 currentLocal = mul(CanvasWorldToLocal, float4(currentWorldPosition, 1.0)).xyz;
+    float2 movementWorld = float2(currentLocal.x - previousLocal.x, currentLocal.z - previousLocal.z) * safeCanvasSize;
+
+    float3 localVelocity = mul(CanvasWorldToLocal, float4(impactVelocityWorld, 0.0)).xyz;
+    float2 tangentVelocityWorld = localVelocity.xz * safeCanvasSize;
+    if (dot(movementWorld, movementWorld) <= Epsilon && dot(tangentVelocityWorld, tangentVelocityWorld) > Epsilon)
+    {
+        movementWorld = tangentVelocityWorld * DeltaTime;
+    }
+
+    float travelWorld = length(movementWorld);
+    float minimumStrokeLength = max(0.002, CanvasMinImpactRadius * 0.35);
+    if (travelWorld <= minimumStrokeLength)
+    {
+        return;
+    }
+
+    float maxStrokeLength = max(CanvasMinImpactRadius * 1.5, CanvasMaxImpactRadius * 0.9);
+    float strokeLength = min(travelWorld, maxStrokeLength);
+    float sampleSpacing = max(0.004, max(CanvasMinImpactRadius * 0.6, radius * 0.85));
+    int sampleCount = (int)clamp(ceil(strokeLength / sampleSpacing) + 1.0, 2.0, 7.0);
+    float2 directionWorld = movementWorld / max(travelWorld, Epsilon);
+    float2 directionUv = float2(directionWorld.x / safeCanvasSize.x, directionWorld.y / safeCanvasSize.y);
+
+    [loop]
+    for (int i = 0; i < sampleCount; i++)
+    {
+        float sampleT = (float)i / max(1.0, (float)(sampleCount - 1));
+        float centeredT = sampleT - 0.5;
+        float2 sampleUv = impactUv + directionUv * centeredT * strokeLength;
+        float taper = 1.0 - abs(centeredT) * 0.45;
+        DepositCanvasBrushStamp(sampleUv, radius, color, amount, wetness, impactVelocityWorld, 0.55 * taper, 0.95);
+    }
+}
+
+uint GetSafeHoleCount()
+{
+    return min(max(HoleCount, 1u), 4u);
+}
+
+uint GetHoleIndex(uint value)
+{
+    return value % GetSafeHoleCount();
+}
+
+float3 GetHoleLocalPosition(uint index)
+{
+    if (index == 1u)
+    {
+        return HoleLocalPosition1;
+    }
+
+    if (index == 2u)
+    {
+        return HoleLocalPosition2;
+    }
+
+    if (index == 3u)
+    {
+        return HoleLocalPosition3;
+    }
+
+    return HoleLocalPosition0;
+}
+
+float3 GetEmitLocalPosition(uint index)
+{
+    if (index == 1u)
+    {
+        return EmitLocalPosition1;
+    }
+
+    if (index == 2u)
+    {
+        return EmitLocalPosition2;
+    }
+
+    if (index == 3u)
+    {
+        return EmitLocalPosition3;
+    }
+
+    return EmitLocalPosition0;
+}
+
+float3 GetHoleDirection(uint index)
+{
+    float3 direction = HoleLocalDirection0;
+    if (index == 1u)
+    {
+        direction = HoleLocalDirection1;
+    }
+    else if (index == 2u)
+    {
+        direction = HoleLocalDirection2;
+    }
+    else if (index == 3u)
+    {
+        direction = HoleLocalDirection3;
+    }
+
+    return dot(direction, direction) > Epsilon ? normalize(direction) : float3(0.0, -1.0, 0.0);
+}
+
+float GetHoleRadius(uint index)
+{
+    if (index == 1u)
+    {
+        return max(0.0, HoleRadii.y);
+    }
+
+    if (index == 2u)
+    {
+        return max(0.0, HoleRadii.z);
+    }
+
+    if (index == 3u)
+    {
+        return max(0.0, HoleRadii.w);
+    }
+
+    return max(0.0, HoleRadii.x);
+}
+
+float GetPerHoleBudget(uint holeCount)
+{
+    return ceil((float)MaxExtractionsPerStep / max(1.0, (float)holeCount));
+}
+
 [numthreads(64, 1, 1)]
 void ClearFrameCounters(uint3 id : SV_DispatchThreadID)
 {
@@ -436,7 +667,10 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
 {
     if (PhysicalPourMode != 0u)
     {
-        if (id.x >= MaxExtractionsPerStep || PaintFlowRate <= 0.0 || HoleRadius <= 0.0)
+        uint holeCount = GetSafeHoleCount();
+        uint holeIndex = GetHoleIndex(id.x);
+        float holeRadius = GetHoleRadius(holeIndex);
+        if (id.x >= MaxExtractionsPerStep || PaintFlowRate <= 0.0 || holeRadius <= 0.0)
         {
             return;
         }
@@ -450,16 +684,17 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
             return;
         }
 
-        float3 holeDirection = normalize(HoleLocalDirection);
+        float3 holeDirection = GetHoleDirection(holeIndex);
         float3 tangent;
         float3 bitangent;
         BuildOrthonormalBasis(holeDirection, tangent, bitangent);
 
-        uint seed = id.x * 7919u + FrameIndex * 104729u;
+        uint seed = id.x * 7919u + FrameIndex * 104729u + holeIndex * 3571u;
         float2 disk = DiskSample(seed);
-        float3 apertureOffset = (tangent * disk.x + bitangent * disk.y) * HoleRadius * 0.85;
-        float spawnPhase = ((float)id.x + Hash01(seed + 17u) * 0.35) / max(1.0, (float)MaxExtractionsPerStep);
-        float3 localContact = EmitLocalPosition + apertureOffset + holeDirection * OutflowSpawnSpacing * spawnPhase;
+        float3 apertureOffset = (tangent * disk.x + bitangent * disk.y) * holeRadius * 0.85;
+        uint localEmissionIndex = id.x / max(1u, holeCount);
+        float spawnPhase = ((float)localEmissionIndex + Hash01(seed + 17u) * 0.35) / max(1.0, GetPerHoleBudget(holeCount));
+        float3 localContact = GetEmitLocalPosition(holeIndex) + apertureOffset + holeDirection * OutflowSpawnSpacing * spawnPhase;
         float3 worldPosition = mul(BucketLocalToWorld, float4(localContact, 1.0)).xyz;
 
         float2 jitterDisk = DiskSample(seed + 4099u);
@@ -489,7 +724,8 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    if (id.x >= BucketParticleCount || PaintFlowRate <= 0.0 || HoleRadius <= 0.0)
+    uint holeCount = GetSafeHoleCount();
+    if (id.x >= BucketParticleCount || PaintFlowRate <= 0.0 || GetHoleRadius(0u) <= 0.0)
     {
         return;
     }
@@ -500,26 +736,60 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    float3 holeDirection = normalize(HoleLocalDirection);
-    float previousPlane = dot(particle.positionLocal - HoleLocalPosition, holeDirection);
-    float currentPlane = dot(particle.predictedPositionLocal - HoleLocalPosition, holeDirection);
-    float outwardVelocity = dot(particle.velocityLocal, holeDirection);
-    bool crossesHolePlane = previousPlane <= BucketParticleRadius && currentPlane >= -BucketParticleRadius && outwardVelocity > 0.0;
-    bool nearDrainPlane = currentPlane >= -(BucketParticleRadius + DrainProbeDepth) &&
-                          currentPlane <= BucketParticleRadius;
-    bool hasOutflowMotion = outwardVelocity >= RequiredOutwardVelocity;
-
-    float3 radial = particle.predictedPositionLocal - HoleLocalPosition - holeDirection * currentPlane;
-
     float flowScale = clamp(sqrt(max(PaintFlowRate, 0.01)), 0.25, 2.0);
-    float effectiveHoleRadius = HoleRadius * flowScale;
-    float captureRadius = max(effectiveHoleRadius + BucketParticleRadius * 0.55, DrainCaptureRadius);
     float throttle = saturate(PaintFlowRate);
     bool passesThrottle = throttle >= 0.999 || Hash01(id.x + FrameIndex * 4099u) <= throttle;
+    if (!passesThrottle)
+    {
+        return;
+    }
 
-    bool insideHole = dot(radial, radial) <= captureRadius * captureRadius;
+    bool foundHole = false;
+    uint holeIndex = 0u;
+    float3 holeDirection = GetHoleDirection(0u);
+    float3 radial = float3(0.0, 0.0, 0.0);
+    float effectiveHoleRadius = 0.0;
 
-    if (!(crossesHolePlane || (nearDrainPlane && hasOutflowMotion)) || !insideHole || !passesThrottle)
+    [unroll]
+    for (uint candidate = 0u; candidate < 4u; candidate++)
+    {
+        if (candidate >= holeCount)
+        {
+            break;
+        }
+
+        float candidateHoleRadius = GetHoleRadius(candidate);
+        if (candidateHoleRadius <= 0.0)
+        {
+            continue;
+        }
+
+        float3 candidateDirection = GetHoleDirection(candidate);
+        float3 candidatePosition = GetHoleLocalPosition(candidate);
+        float previousPlane = dot(particle.positionLocal - candidatePosition, candidateDirection);
+        float currentPlane = dot(particle.predictedPositionLocal - candidatePosition, candidateDirection);
+        float outwardVelocity = dot(particle.velocityLocal, candidateDirection);
+        bool crossesHolePlane = previousPlane <= BucketParticleRadius && currentPlane >= -BucketParticleRadius && outwardVelocity > 0.0;
+        bool nearDrainPlane = currentPlane >= -(BucketParticleRadius + DrainProbeDepth) &&
+                              currentPlane <= BucketParticleRadius;
+        bool hasOutflowMotion = outwardVelocity >= RequiredOutwardVelocity;
+        float3 candidateRadial = particle.predictedPositionLocal - candidatePosition - candidateDirection * currentPlane;
+        float candidateEffectiveHoleRadius = candidateHoleRadius * flowScale;
+        float captureRadius = max(candidateEffectiveHoleRadius + BucketParticleRadius * 0.55, DrainCaptureRadius);
+        bool insideHole = dot(candidateRadial, candidateRadial) <= captureRadius * captureRadius;
+
+        if ((crossesHolePlane || (nearDrainPlane && hasOutflowMotion)) && insideHole)
+        {
+            foundHole = true;
+            holeIndex = candidate;
+            holeDirection = candidateDirection;
+            radial = candidateRadial;
+            effectiveHoleRadius = candidateEffectiveHoleRadius;
+            break;
+        }
+    }
+
+    if (!foundHole)
     {
         return;
     }
@@ -544,8 +814,10 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
     float3 apertureOffset = radialLength > effectiveHoleRadius && radialLength > Epsilon
         ? radial / radialLength * effectiveHoleRadius
         : radial;
-    float3 localContact = EmitLocalPosition + apertureOffset;
-    float spawnPhase = ((float)extractionBudgetIndex + Hash01(id.x + FrameIndex * 6151u) * 0.35) / max(1.0, (float)MaxExtractionsPerStep);
+    float3 localContact = GetEmitLocalPosition(holeIndex) + apertureOffset;
+    uint localExtractionIndex = extractionBudgetIndex / max(1u, holeCount);
+    float spawnPhase = ((float)localExtractionIndex + Hash01(id.x + FrameIndex * 6151u + holeIndex * 1237u) * 0.35) /
+        max(1.0, GetPerHoleBudget(holeCount));
     localContact += holeDirection * OutflowSpawnSpacing * spawnPhase;
     float3 worldPosition = mul(BucketLocalToWorld, float4(localContact, 1.0)).xyz;
     float3 exitVelocityLocal = particle.velocityLocal;
@@ -925,6 +1197,15 @@ void DetectCanvasImpacts(uint3 id : SV_DispatchThreadID)
         return;
     }
 
+    DepositCanvasStroke(
+        particle.previousPositionWorld,
+        particle.positionWorld,
+        uv,
+        particle.radius,
+        particle.color,
+        particle.amount,
+        particle.wetness,
+        particle.velocityWorld);
     DepositCanvasSplat(uv, particle.radius, particle.color, particle.amount, particle.wetness, particle.velocityWorld);
     particle.active = 0;
     outflowParticles[id.x] = particle;

@@ -20,6 +20,7 @@ namespace SwingingPaint.BucketFluid.Core
         private const string ComputeShaderPath = "Assets/Shaders/BucketFluid/GPUFluidOutflow.compute";
         private const int ThreadGroupSize = 64;
         private const int CounterCount = 9;
+        private const int MaxVirtualHoleCount = 4;
 
         private static readonly int BucketParticlesId = Shader.PropertyToID("bucketParticles");
         private static readonly int OutflowParticlesId = Shader.PropertyToID("outflowParticles");
@@ -53,6 +54,29 @@ namespace SwingingPaint.BucketFluid.Core
         private static readonly int EmitLocalPositionId = Shader.PropertyToID("EmitLocalPosition");
         private static readonly int HoleLocalDirectionId = Shader.PropertyToID("HoleLocalDirection");
         private static readonly int HoleRadiusId = Shader.PropertyToID("HoleRadius");
+        private static readonly int HoleCountId = Shader.PropertyToID("HoleCount");
+        private static readonly int HoleRadiiId = Shader.PropertyToID("HoleRadii");
+        private static readonly int[] HoleLocalPositionIds =
+        {
+            Shader.PropertyToID("HoleLocalPosition0"),
+            Shader.PropertyToID("HoleLocalPosition1"),
+            Shader.PropertyToID("HoleLocalPosition2"),
+            Shader.PropertyToID("HoleLocalPosition3")
+        };
+        private static readonly int[] EmitLocalPositionIds =
+        {
+            Shader.PropertyToID("EmitLocalPosition0"),
+            Shader.PropertyToID("EmitLocalPosition1"),
+            Shader.PropertyToID("EmitLocalPosition2"),
+            Shader.PropertyToID("EmitLocalPosition3")
+        };
+        private static readonly int[] HoleLocalDirectionIds =
+        {
+            Shader.PropertyToID("HoleLocalDirection0"),
+            Shader.PropertyToID("HoleLocalDirection1"),
+            Shader.PropertyToID("HoleLocalDirection2"),
+            Shader.PropertyToID("HoleLocalDirection3")
+        };
         private static readonly int BucketParticleRadiusId = Shader.PropertyToID("BucketParticleRadius");
         private static readonly int ParticleRadiusId = Shader.PropertyToID("ParticleRadius");
         private static readonly int PaintFlowRateId = Shader.PropertyToID("PaintFlowRate");
@@ -123,6 +147,13 @@ namespace SwingingPaint.BucketFluid.Core
             public float padding;
         }
 
+        public enum HolePattern
+        {
+            Single = 0,
+            TwoOpposite = 1,
+            FourCardinal = 2
+        }
+
         public const int ExpectedOutflowParticleStride = 96;
         public static readonly int OutflowParticleStride = Marshal.SizeOf(typeof(OutflowParticle));
         public static bool HasValidOutflowParticleStride => OutflowParticleStride == ExpectedOutflowParticleStride;
@@ -162,6 +193,12 @@ namespace SwingingPaint.BucketFluid.Core
         public bool livePaintColorWhileFalling = true;
         [Min(0f)]
         public float holeDiameter = 0.035f;
+        [Header("Multi-Hole Pattern")]
+        public HolePattern holePattern = HolePattern.Single;
+        [Min(0f)]
+        public float multiHoleRingRadius = 0.04f;
+        [Tooltip("When enabled, the total paint volume is split across all virtual holes instead of multiplying by hole count.")]
+        public bool preserveTotalFlow;
         [Min(0.1f)]
         public float outflowLifetime = 6f;
         [Min(0.1f)]
@@ -186,7 +223,7 @@ namespace SwingingPaint.BucketFluid.Core
         [Range(0.1f, 1f)]
         public float maxOutflowRadiusFromBucketParticle = 0.38f;
         [Min(0f)]
-        public float outflowSpawnSpacing = 0.012f;
+        public float outflowSpawnSpacing = 0.006f;
         [Min(0.001f)]
         public float streamBreakDistance = 0.14f;
         [Min(0.001f)]
@@ -196,9 +233,9 @@ namespace SwingingPaint.BucketFluid.Core
 
         [Header("Capacity")]
         [Min(64)]
-        public int developmentOutflowCapacity = 16384;
+        public int developmentOutflowCapacity = 8192;
         [Min(64)]
-        public int presentationOutflowCapacity = 65536;
+        public int presentationOutflowCapacity = 32768;
         [Min(64)]
         public int hashTableSize = 4096;
         [Min(1)]
@@ -261,6 +298,10 @@ namespace SwingingPaint.BucketFluid.Core
         private uint _indexCountPerInstance = 6;
         private uint _indexStart;
         private uint _baseVertex;
+        private readonly Vector4[] _holeLocalPositions = new Vector4[MaxVirtualHoleCount];
+        private readonly Vector4[] _emitLocalPositions = new Vector4[MaxVirtualHoleCount];
+        private readonly Vector4[] _holeLocalDirections = new Vector4[MaxVirtualHoleCount];
+        private readonly float[] _holeRadii = new float[MaxVirtualHoleCount];
 
         private int _clearFrameCountersKernel;
         private int _extractOutflowKernel;
@@ -599,15 +640,22 @@ namespace SwingingPaint.BucketFluid.Core
             float viscosity = physicsSettings != null ? physicsSettings.PaintViscosity : settings != null ? settings.viscosity : 0.45f;
             float flowRate = physicsSettings != null ? physicsSettings.PaintFlowRate : 1f;
             float holeDiameter = GetHoleDiameter();
+            int virtualHoleCount = GetVirtualHoleCount();
+            float totalFlowMultiplier = preserveTotalFlow ? 1f : virtualHoleCount;
+            float perHoleFlowDivisor = preserveTotalFlow ? Mathf.Max(1, virtualHoleCount) : 1f;
             float effectiveFlowRate = GetEffectiveOutflowRate(flowRate, holeDiameter);
+            float budgetEffectiveFlowRate = effectiveFlowRate * totalFlowMultiplier;
             Vector3 gravity = Vector3.down * (physicsSettings != null ? physicsSettings.Gravity : settings != null ? settings.gravity : 9.81f);
             float gravityMagnitude = gravity.magnitude;
             float physicalHead = GetPhysicalPaintHead();
-            float physicalFlowRate = GetTorricelliFlowRate(flowRate, holeDiameter, viscosity, physicalHead, gravityMagnitude);
+            float physicalFlowRate = GetTorricelliFlowRate(flowRate, holeDiameter, viscosity, physicalHead, gravityMagnitude) * totalFlowMultiplier;
+            CurrentPhysicalFlowRateCubicMetersPerSecond = physicalFlowRate;
             float physicalExitSpeed = GetPhysicalExitSpeed(physicalHead, gravityMagnitude, viscosity);
             float particleVolume = GetOutflowParticleVolume(outflowParticleRadius);
             int physicalEmissionBudget = GetPhysicalEmissionBudget(physicalFlowRate, particleVolume, deltaTime);
-            float shaderPaintFlowRate = usePhysicalPourModel ? flowRate : effectiveFlowRate;
+            float shaderPaintFlowRate = usePhysicalPourModel
+                ? flowRate / perHoleFlowDivisor
+                : effectiveFlowRate / perHoleFlowDivisor;
             float amountScale = Mathf.Clamp(
                 (outflowParticleRadius * outflowParticleRadius) / Mathf.Max(0.000001f, particleRadius * particleRadius),
                 0.06f,
@@ -647,6 +695,13 @@ namespace SwingingPaint.BucketFluid.Core
             {
                 holeLocalDirection = Vector3.down;
             }
+            holeLocalDirection.Normalize();
+
+            int shaderHoleCount = ConfigureVirtualHoles(
+                holeLocalPosition,
+                emitLocalPosition,
+                holeLocalDirection,
+                Mathf.Max(0f, holeDiameter) * 0.5f);
 
             Transform canvasTransform = paintSurface.transform;
             Vector3 canvasPoint = canvasTransform.TransformPoint(new Vector3(0f, paintSurface.surfaceLocalY, 0f));
@@ -665,7 +720,7 @@ namespace SwingingPaint.BucketFluid.Core
             outflowComputeShader.SetFloat(DeltaTimeId, deltaTime);
             CurrentExtractionBudget = usePhysicalPourModel
                 ? physicalEmissionBudget
-                : GetExtractionBudget(effectiveFlowRate, viscosity);
+                : GetExtractionBudget(budgetEffectiveFlowRate, viscosity);
             outflowComputeShader.SetInt(MaxExtractionsPerStepId, CurrentExtractionBudget);
             outflowComputeShader.SetInt(ConsumeBucketParticlesId, infinitePaintSupplyForTuning ? 0 : 1);
             outflowComputeShader.SetInt(LivePaintColorId, livePaintColorWhileFalling ? 1 : 0);
@@ -678,14 +733,25 @@ namespace SwingingPaint.BucketFluid.Core
             outflowComputeShader.SetVector(EffectiveWorldGravityId, gravity);
             outflowComputeShader.SetVector(HoleLocalPositionId, holeLocalPosition);
             outflowComputeShader.SetVector(EmitLocalPositionId, emitLocalPosition);
-            outflowComputeShader.SetVector(HoleLocalDirectionId, holeLocalDirection.normalized);
+            outflowComputeShader.SetVector(HoleLocalDirectionId, holeLocalDirection);
             outflowComputeShader.SetFloat(HoleRadiusId, Mathf.Max(0f, holeDiameter) * 0.5f);
+            outflowComputeShader.SetInt(HoleCountId, shaderHoleCount);
+            for (int i = 0; i < MaxVirtualHoleCount; i++)
+            {
+                outflowComputeShader.SetVector(HoleLocalPositionIds[i], _holeLocalPositions[i]);
+                outflowComputeShader.SetVector(EmitLocalPositionIds[i], _emitLocalPositions[i]);
+                outflowComputeShader.SetVector(HoleLocalDirectionIds[i], _holeLocalDirections[i]);
+            }
+
+            outflowComputeShader.SetVector(
+                HoleRadiiId,
+                new Vector4(_holeRadii[0], _holeRadii[1], _holeRadii[2], _holeRadii[3]));
             outflowComputeShader.SetFloat(BucketParticleRadiusId, particleRadius);
             outflowComputeShader.SetFloat(ParticleRadiusId, outflowParticleRadius);
             outflowComputeShader.SetFloat(PaintFlowRateId, shaderPaintFlowRate);
             outflowComputeShader.SetFloat(DrainProbeDepthId, GetSafeDrainProbeDepth(particleRadius));
             outflowComputeShader.SetFloat(DrainCaptureRadiusId, GetSafeDrainCaptureRadius(particleRadius, GetHoleDiameter()));
-            outflowComputeShader.SetFloat(MinimumOutflowSpeedId, minimumOutflowSpeed * Mathf.Max(0.25f, Mathf.Sqrt(Mathf.Max(0.01f, effectiveFlowRate))));
+            outflowComputeShader.SetFloat(MinimumOutflowSpeedId, minimumOutflowSpeed * Mathf.Max(0.25f, Mathf.Sqrt(Mathf.Max(0.01f, shaderPaintFlowRate))));
             outflowComputeShader.SetFloat(RequiredOutwardVelocityId, requiredOutwardVelocity);
             outflowComputeShader.SetFloat(OutflowSpawnSpacingId, GetOutflowSpawnSpacing(outflowParticleRadius));
             outflowComputeShader.SetFloat(SmoothingRadiusId, settings != null ? settings.smoothingRadius * 0.75f : 0.075f);
@@ -740,6 +806,109 @@ namespace SwingingPaint.BucketFluid.Core
             BindBuffers(_updateOutflowParticlesKernel, bucketParticleBuffer);
             BindBuffers(_buildStreamConnectorsKernel, bucketParticleBuffer);
             BindBuffers(_buildIndirectArgsKernel, bucketParticleBuffer);
+        }
+
+        private int ConfigureVirtualHoles(
+            Vector3 baseHoleLocalPosition,
+            Vector3 baseEmitLocalPosition,
+            Vector3 holeLocalDirection,
+            float holeRadius)
+        {
+            int holeCount = GetVirtualHoleCount();
+            float ringRadius = holeCount > 1 ? GetSafeMultiHoleRingRadius(holeRadius) : 0f;
+            BuildHoleOffsetBasis(holeLocalDirection, out Vector3 right, out Vector3 forward);
+
+            for (int i = 0; i < MaxVirtualHoleCount; i++)
+            {
+                Vector3 offset = GetHoleOffset(i, holeCount, right, forward, ringRadius);
+                Vector3 holePosition = baseHoleLocalPosition + offset;
+                Vector3 emitPosition = baseEmitLocalPosition + offset;
+                _holeLocalPositions[i] = new Vector4(holePosition.x, holePosition.y, holePosition.z, 0f);
+                _emitLocalPositions[i] = new Vector4(emitPosition.x, emitPosition.y, emitPosition.z, 0f);
+                _holeLocalDirections[i] = new Vector4(holeLocalDirection.x, holeLocalDirection.y, holeLocalDirection.z, 0f);
+                _holeRadii[i] = holeRadius;
+            }
+
+            return holeCount;
+        }
+
+        private int GetVirtualHoleCount()
+        {
+            switch (holePattern)
+            {
+                case HolePattern.TwoOpposite:
+                    return 2;
+                case HolePattern.FourCardinal:
+                    return 4;
+                default:
+                    return 1;
+            }
+        }
+
+        private float GetSafeMultiHoleRingRadius(float holeRadius)
+        {
+            float requestedRadius = Mathf.Max(0f, multiHoleRingRadius);
+            if (boundary == null)
+            {
+                return requestedRadius;
+            }
+
+            float maxInsideBottom = Mathf.Max(0f, boundary.bottomRadius - Mathf.Max(0f, holeRadius));
+            return Mathf.Min(requestedRadius, maxInsideBottom);
+        }
+
+        private static Vector3 GetHoleOffset(
+            int index,
+            int holeCount,
+            Vector3 right,
+            Vector3 forward,
+            float ringRadius)
+        {
+            if (holeCount <= 1 || ringRadius <= Mathf.Epsilon)
+            {
+                return Vector3.zero;
+            }
+
+            if (holeCount == 2)
+            {
+                return (index == 0 ? right : -right) * ringRadius;
+            }
+
+            switch (index)
+            {
+                case 0:
+                    return right * ringRadius;
+                case 1:
+                    return -right * ringRadius;
+                case 2:
+                    return forward * ringRadius;
+                case 3:
+                    return -forward * ringRadius;
+                default:
+                    return Vector3.zero;
+            }
+        }
+
+        private static void BuildHoleOffsetBasis(Vector3 holeLocalDirection, out Vector3 right, out Vector3 forward)
+        {
+            Vector3 direction = holeLocalDirection.sqrMagnitude > Mathf.Epsilon
+                ? holeLocalDirection.normalized
+                : Vector3.down;
+
+            right = Vector3.ProjectOnPlane(Vector3.right, direction);
+            if (right.sqrMagnitude <= Mathf.Epsilon)
+            {
+                right = Vector3.ProjectOnPlane(Vector3.forward, direction);
+            }
+
+            right = right.sqrMagnitude > Mathf.Epsilon ? right.normalized : Vector3.right;
+            forward = Vector3.Cross(right, direction);
+            if (forward.sqrMagnitude <= Mathf.Epsilon)
+            {
+                forward = Vector3.ProjectOnPlane(Vector3.forward, direction);
+            }
+
+            forward = forward.sqrMagnitude > Mathf.Epsilon ? forward.normalized : Vector3.forward;
         }
 
         private float GetHoleDiameter()
@@ -988,6 +1157,8 @@ namespace SwingingPaint.BucketFluid.Core
         private void OnValidate()
         {
             holeDiameter = Mathf.Max(0f, holeDiameter);
+            holePattern = (HolePattern)Mathf.Clamp((int)holePattern, 0, 2);
+            multiHoleRingRadius = Mathf.Max(0f, multiHoleRingRadius);
             outflowLifetime = Mathf.Max(0.1f, outflowLifetime);
             maxFallingSpeed = Mathf.Max(0.1f, maxFallingSpeed);
             particleAmount = Mathf.Max(0.0001f, particleAmount);
