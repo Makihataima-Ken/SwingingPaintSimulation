@@ -28,7 +28,7 @@ public class RopeRenderer : MonoBehaviour
 
     [Header("Visual Settings")]
     [Tooltip("Width of the rope line at rest length.")]
-    public float ropeWidth = 0.04f;
+    public float ropeWidth = 0.12f;
 
     [Tooltip("Optional material used by the LineRenderer.")]
     public Material ropeMaterial;
@@ -38,7 +38,7 @@ public class RopeRenderer : MonoBehaviour
     public bool reflectStretch = true;
 
     [Tooltip("Rope colour at or below rest length.")]
-    public Color slackColor = Color.white;
+    public Color slackColor = Color.black;
 
     [Tooltip("Rope colour when stretched to fully extended (see fullStretchRatio).")]
     public Color stretchedColor = new Color(1f, 0.4f, 0.2f, 1f);

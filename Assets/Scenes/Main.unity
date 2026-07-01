@@ -360,12 +360,20 @@ MonoBehaviour:
   anchorTransform: {fileID: 41000002}
   bucketTransform: {fileID: 45000002}
   simulationSettings: {fileID: 0}
-  ropeLength: 1.98
-  initialAngleDegrees: 0
-  initialAngularVelocity: 0
-  directionAngleDegrees: 0
+  initialAngleDegrees: 30
+  initialAngularVelocity: 1
+  directionAngleDegrees: 14.39
   damping: 0.05
   gravity: 9.81
+  restLength: 1.98
+  ropeStiffness: 50
+  ropeDamping: 0.5
+  ropeElasticity: 0.5
+  maxSubStep: 0.005
+  maxFrameTime: 0.1
+  maxStretchMultiplier: 4
+  maxRadialSpeed: 50
+  maxAngularSpeed: 50
   drawDebugGizmos: 1
   debugDirectionLength: 1
 --- !u!114 &40000004
@@ -597,6 +605,11 @@ MonoBehaviour:
   pendulum: {fileID: 40000003}
   ropeWidth: 0.04
   ropeMaterial: {fileID: 0}
+  reflectStretch: 1
+  slackColor: {r: 1, g: 1, b: 1, a: 1}
+  stretchedColor: {r: 1, g: 0.4, b: 0.2, a: 1}
+  fullStretchRatio: 0.5
+  stretchedWidthScale: 0.6
 --- !u!120 &44000007
 LineRenderer:
   serializedVersion: 2
