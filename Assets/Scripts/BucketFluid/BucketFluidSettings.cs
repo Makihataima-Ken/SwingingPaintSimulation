@@ -65,7 +65,7 @@ namespace SwingingPaint.BucketFluid
         // Internal friction. Higher viscosity makes paint syrupy and slow to shear; lower
         // viscosity makes it splash and slosh more like water.
         [Tooltip("Internal fluid friction; higher values make paint thicker.")]
-        public float viscosity = 0.45f;
+        public float viscosity = 1.2f;
 
         // Surface smoothing force. Higher values keep the visible liquid surface rounded and
         // resistant to tiny ripples.
@@ -125,7 +125,7 @@ namespace SwingingPaint.BucketFluid
         [Header("Fluid Fill")]
         [Tooltip("Initial local-space fill height as a fraction of the bucket interior.")]
         [Range(0.01f, 1f)]
-        public float fillHeightPercent = 0.55f;
+        public float fillHeightPercent = 0.85f;
 
         // Small deterministic spawn offset as a fraction of particle spacing. This breaks up
         // visible perfect rows while keeping the initial mass safely inside the bucket.
@@ -176,14 +176,15 @@ namespace SwingingPaint.BucketFluid
         [Range(0f, 1f)]
         public float metallic = 0f;
 
-        // Enables the GPU compute path. Leave true for the intended high-particle simulation.
+        // Enables the GPU compute path. This project is GPU-only for fluid simulation, so the
+        // value is forced on during validation.
         [Header("Performance")]
-        [Tooltip("Use GPU compute buffers and shaders for the fluid simulation.")]
+        [Tooltip("GPU-only fluid simulation. This is forced on; there is no CPU simulation fallback.")]
         public bool useGPU = true;
 
         // Enables additional debug readouts and validation aids. Disable for presentation.
         [Tooltip("Enable debug information for fluid development.")]
-        public bool enableDebug = true;
+        public bool enableDebug = false;
 
         [HideInInspector]
         public bool drawBoundaryGizmos = true;
@@ -195,6 +196,8 @@ namespace SwingingPaint.BucketFluid
 
         private void OnValidate()
         {
+            useGPU = true;
+
             developmentParticleCount = Mathf.Max(1, developmentParticleCount);
             presentationParticleCount = Mathf.Max(1, presentationParticleCount);
 
