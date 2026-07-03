@@ -6,6 +6,7 @@ using UnityEngine;
 
 #if UNITY_EDITOR
 using UnityEditor;
+using UnityEditor.SceneManagement;
 #endif
 
 namespace SwingingPaint.Core
@@ -22,6 +23,9 @@ namespace SwingingPaint.Core
         [Header("00 - How To Use")]
         [Tooltip("When enabled, changing values here applies them to PhysicsSettings, fluid, outflow, renderer, and canvas. Keep disabled when tuning lower-level components directly.")]
         public bool autoApply = false;
+
+        [Tooltip("Editor only: keeps tuning edits made during Play mode by copying them back into the edit-mode scene when Play stops.")]
+        public bool preservePlayModeChanges = true;
 
         [Tooltip("Enable only when you intentionally want the component to search the scene and refill missing references.")]
         public bool autoResolveReferences = true;
@@ -55,7 +59,7 @@ namespace SwingingPaint.Core
         [Min(0f)]
         public float viscosity = 1.2f;
 
-        [Tooltip("Logical paint quantity used by the central settings/fallback emitter. GPU bucket amount is controlled by Bucket Fill Amount for now.")]
+        [Tooltip("Logical paint quantity used by finite paint supply. GPU outflow caps this to the visible bucket particle inventory.")]
         [Min(0f)]
         public float logicalPaintQuantity = 100f;
 
@@ -166,6 +170,13 @@ namespace SwingingPaint.Core
 
         private bool _runtimeReferencesApplied;
 
+#if UNITY_EDITOR
+        private const string PlayModeSnapshotSessionKey = "SwingingPaint.PresentationTuningControls.PlayModeSnapshot";
+        private const string PlayModeSnapshotPendingSessionKey = "SwingingPaint.PresentationTuningControls.PlayModeSnapshot.Pending";
+
+        [System.NonSerialized] private bool _restoringPlayModeSnapshot;
+#endif
+
         [ContextMenu("Apply Tuning To Scene")]
         public void ApplyTuning()
         {
@@ -182,6 +193,19 @@ namespace SwingingPaint.Core
         {
             _runtimeReferencesApplied = false;
             ResolveReferences();
+#if UNITY_EDITOR
+            TryRestorePlayModeSnapshot();
+#endif
+        }
+
+        private void OnDisable()
+        {
+#if UNITY_EDITOR
+            if (Application.isPlaying && preservePlayModeChanges)
+            {
+                SavePlayModeSnapshot();
+            }
+#endif
         }
 
         private void Start()
@@ -203,6 +227,13 @@ namespace SwingingPaint.Core
         private void OnValidate()
         {
             ClampValues();
+
+#if UNITY_EDITOR
+            if (_restoringPlayModeSnapshot || (EditorApplication.isPlayingOrWillChangePlaymode && !Application.isPlaying))
+            {
+                return;
+            }
+#endif
 
             if (autoApply)
             {
@@ -449,12 +480,184 @@ namespace SwingingPaint.Core
             presentationParticleCount = Mathf.Max(1, presentationParticleCount);
         }
 
+#if UNITY_EDITOR
+        private void SavePlayModeSnapshot()
+        {
+            if (autoApply)
+            {
+                PullCurrentValuesFromScene();
+            }
+
+            string json = JsonUtility.ToJson(CaptureSnapshot());
+            SessionState.SetString(PlayModeSnapshotSessionKey, json);
+            SessionState.SetBool(PlayModeSnapshotPendingSessionKey, true);
+        }
+
+        private void TryRestorePlayModeSnapshot()
+        {
+            if (Application.isPlaying || !preservePlayModeChanges)
+            {
+                return;
+            }
+
+            if (!SessionState.GetBool(PlayModeSnapshotPendingSessionKey, false))
+            {
+                return;
+            }
+
+            string json = SessionState.GetString(PlayModeSnapshotSessionKey, string.Empty);
+            SessionState.SetBool(PlayModeSnapshotPendingSessionKey, false);
+            SessionState.SetString(PlayModeSnapshotSessionKey, string.Empty);
+
+            if (string.IsNullOrEmpty(json))
+            {
+                return;
+            }
+
+            _restoringPlayModeSnapshot = true;
+            ApplySnapshot(JsonUtility.FromJson<TuningSnapshot>(json));
+            _restoringPlayModeSnapshot = false;
+
+            ResolveReferences();
+            ApplyTuning(restartSimulation: false);
+            MarkDirty(this);
+        }
+
+        private TuningSnapshot CaptureSnapshot()
+        {
+            return new TuningSnapshot
+            {
+                autoApply = autoApply,
+                autoResolveReferences = autoResolveReferences,
+                paintColor = paintColor,
+                bucketFillAmount = bucketFillAmount,
+                flowRate = flowRate,
+                holeDiameter = holeDiameter,
+                viscosity = viscosity,
+                logicalPaintQuantity = logicalPaintQuantity,
+                infinitePaintSupplyForTuning = infinitePaintSupplyForTuning,
+                livePaintColorWhileFalling = livePaintColorWhileFalling,
+                streamWidth = streamWidth,
+                streamContinuity = streamContinuity,
+                streamTrailLength = streamTrailLength,
+                streamOpacity = streamOpacity,
+                surfaceAbsorption = surfaceAbsorption,
+                maxImpactRadius = maxImpactRadius,
+                markOpacity = markOpacity,
+                flowSpreadBoost = flowSpreadBoost,
+                surfaceSpread = surfaceSpread,
+                edgeIrregularity = edgeIrregularity,
+                splatterStrength = splatterStrength,
+                directionalStretch = directionalStretch,
+                slidingStrength = slidingStrength,
+                dischargeCoefficient = dischargeCoefficient,
+                viscosityFlowDamping = viscosityFlowDamping,
+                fallingAirTurbulence = fallingAirTurbulence,
+                startAngle = startAngle,
+                sidePushVelocity = sidePushVelocity,
+                swingDirection = swingDirection,
+                ropeLength = ropeLength,
+                motionDamping = motionDamping,
+                presentationMode = presentationMode,
+                developmentParticleCount = developmentParticleCount,
+                presentationParticleCount = presentationParticleCount
+            };
+        }
+
+        private void ApplySnapshot(TuningSnapshot snapshot)
+        {
+            autoApply = snapshot.autoApply;
+            autoResolveReferences = snapshot.autoResolveReferences;
+            paintColor = snapshot.paintColor;
+            bucketFillAmount = snapshot.bucketFillAmount;
+            flowRate = snapshot.flowRate;
+            holeDiameter = snapshot.holeDiameter;
+            viscosity = snapshot.viscosity;
+            logicalPaintQuantity = snapshot.logicalPaintQuantity;
+            infinitePaintSupplyForTuning = snapshot.infinitePaintSupplyForTuning;
+            livePaintColorWhileFalling = snapshot.livePaintColorWhileFalling;
+            streamWidth = snapshot.streamWidth;
+            streamContinuity = snapshot.streamContinuity;
+            streamTrailLength = snapshot.streamTrailLength;
+            streamOpacity = snapshot.streamOpacity;
+            surfaceAbsorption = snapshot.surfaceAbsorption;
+            maxImpactRadius = snapshot.maxImpactRadius;
+            markOpacity = snapshot.markOpacity;
+            flowSpreadBoost = snapshot.flowSpreadBoost;
+            surfaceSpread = snapshot.surfaceSpread;
+            edgeIrregularity = snapshot.edgeIrregularity;
+            splatterStrength = snapshot.splatterStrength;
+            directionalStretch = snapshot.directionalStretch;
+            slidingStrength = snapshot.slidingStrength;
+            dischargeCoefficient = snapshot.dischargeCoefficient;
+            viscosityFlowDamping = snapshot.viscosityFlowDamping;
+            fallingAirTurbulence = snapshot.fallingAirTurbulence;
+            startAngle = snapshot.startAngle;
+            sidePushVelocity = snapshot.sidePushVelocity;
+            swingDirection = snapshot.swingDirection;
+            ropeLength = snapshot.ropeLength;
+            motionDamping = snapshot.motionDamping;
+            presentationMode = snapshot.presentationMode;
+            developmentParticleCount = snapshot.developmentParticleCount;
+            presentationParticleCount = snapshot.presentationParticleCount;
+            ClampValues();
+        }
+
+        [System.Serializable]
+        private struct TuningSnapshot
+        {
+            public bool autoApply;
+            public bool autoResolveReferences;
+            public Color paintColor;
+            public float bucketFillAmount;
+            public float flowRate;
+            public float holeDiameter;
+            public float viscosity;
+            public float logicalPaintQuantity;
+            public bool infinitePaintSupplyForTuning;
+            public bool livePaintColorWhileFalling;
+            public float streamWidth;
+            public float streamContinuity;
+            public float streamTrailLength;
+            public float streamOpacity;
+            public float surfaceAbsorption;
+            public float maxImpactRadius;
+            public float markOpacity;
+            public float flowSpreadBoost;
+            public float surfaceSpread;
+            public float edgeIrregularity;
+            public float splatterStrength;
+            public float directionalStretch;
+            public float slidingStrength;
+            public float dischargeCoefficient;
+            public float viscosityFlowDamping;
+            public float fallingAirTurbulence;
+            public float startAngle;
+            public float sidePushVelocity;
+            public float swingDirection;
+            public float ropeLength;
+            public float motionDamping;
+            public bool presentationMode;
+            public int developmentParticleCount;
+            public int presentationParticleCount;
+        }
+#endif
+
         private static void MarkDirty(Object target)
         {
 #if UNITY_EDITOR
             if (target != null && !Application.isPlaying)
             {
                 EditorUtility.SetDirty(target);
+
+                if (target is Component component && component.gameObject.scene.IsValid())
+                {
+                    EditorSceneManager.MarkSceneDirty(component.gameObject.scene);
+                }
+                else if (target is GameObject gameObject && gameObject.scene.IsValid())
+                {
+                    EditorSceneManager.MarkSceneDirty(gameObject.scene);
+                }
             }
 #endif
         }

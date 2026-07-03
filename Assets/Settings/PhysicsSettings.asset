@@ -25,7 +25,7 @@ MonoBehaviour:
   restLength: 1.98
   ropeStiffness: 50
   ropeElasticity: 0.5
-  paintFlowRate: 3.84
+  paintFlowRate: 2
   paintViscosity: 1.2
   paintQuantity: 100
   paintColor: {r: 0.05, g: 0.22, b: 0.95, a: 1}

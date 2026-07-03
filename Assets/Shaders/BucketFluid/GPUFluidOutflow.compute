@@ -646,6 +646,46 @@ float GetPerHoleBudget(uint holeCount)
     return ceil((float)MaxExtractionsPerStep / max(1.0, (float)holeCount));
 }
 
+bool TryConsumeFiniteBucketParticle(uint emissionIndex)
+{
+    if (ConsumeBucketParticles == 0u)
+    {
+        return true;
+    }
+
+    if (BucketParticleCount == 0u)
+    {
+        return false;
+    }
+
+    uint start = emissionIndex % BucketParticleCount;
+    [loop]
+    for (uint attempt = 0u; attempt < BucketParticleCount; attempt++)
+    {
+        uint candidate = (start + attempt) % BucketParticleCount;
+        int original = 0;
+        InterlockedCompareExchange(bucketParticles[candidate].active, 1, 0, original);
+        if (original == 1)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void ReleaseReservedOutflowSlot(uint slot)
+{
+    if (slot >= OutflowCapacity)
+    {
+        return;
+    }
+
+    OutflowParticle particle = outflowParticles[slot];
+    particle.active = 0;
+    outflowParticles[slot] = particle;
+}
+
 [numthreads(64, 1, 1)]
 void ClearFrameCounters(uint3 id : SV_DispatchThreadID)
 {
@@ -681,6 +721,12 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
         if (slot >= OutflowCapacity)
         {
             InterlockedAdd(outflowCounters[2], 1u);
+            return;
+        }
+
+        if (!TryConsumeFiniteBucketParticle(id.x))
+        {
+            ReleaseReservedOutflowSlot(slot);
             return;
         }
 

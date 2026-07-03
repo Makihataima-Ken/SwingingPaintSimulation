@@ -15,6 +15,7 @@ namespace SwingingPaint.BucketFluid.Rendering
         [Header("References")]
         public GPUFluidSimulator simulator;
         public BucketMotionProvider motionProvider;
+        public BucketFluidVolumeRenderer fluidVolumeRenderer;
         public GPUFluidRenderer fluidRenderer;
         public PaintEmitter paintEmitter;
         public GPUFluidOutflowController gpuOutflowController;
@@ -51,7 +52,11 @@ namespace SwingingPaint.BucketFluid.Rendering
             GUILayout.Label($"Particle Buffer Valid: {simulator != null && simulator.ParticleBufferValid}");
             GUILayout.Label($"Particle Buffer Count: {(simulator != null ? simulator.ParticleBufferCount : 0)}");
             GUILayout.Label($"Particle Stride: {(simulator != null ? simulator.ParticleStride : 0)}");
-            GUILayout.Label($"Renderer Enabled: {fluidRenderer != null && fluidRenderer.renderEnabled}");
+            GUILayout.Label($"Fluid Volume Enabled: {fluidVolumeRenderer != null && fluidVolumeRenderer.renderEnabled}");
+            GUILayout.Label($"Fluid Volume Mesh Valid: {fluidVolumeRenderer != null && fluidVolumeRenderer.MeshValid}");
+            GUILayout.Label($"Fluid Volume Fill: {(fluidVolumeRenderer != null ? fluidVolumeRenderer.CurrentFillFraction * 100f : 0f):F1}%");
+            GUILayout.Label($"Fluid Volume Fill Y: {(fluidVolumeRenderer != null ? fluidVolumeRenderer.CurrentFillLocalY : 0f):F4}");
+            GUILayout.Label($"Particle Cloud Enabled: {fluidRenderer != null && fluidRenderer.renderEnabled}");
             GUILayout.Label($"Mesh Assigned: {fluidRenderer != null && fluidRenderer.ParticleMeshAssigned}");
             GUILayout.Label($"Material Assigned: {fluidRenderer != null && fluidRenderer.ParticleMaterialAssigned}");
             GUILayout.Label($"Rendered Instances: {(fluidRenderer != null ? fluidRenderer.RenderedInstanceCount : 0)}");
@@ -110,8 +115,11 @@ namespace SwingingPaint.BucketFluid.Rendering
             GUILayout.Label($"Predicted Contacts/Tick: {(paintEmitter != null ? paintEmitter.PredictedCanvasContactsThisTick : 0)}");
             GUILayout.Label($"Canvas Dirty Before Render: {paintEmitter != null && paintEmitter.CanvasTextureDirtyBeforeRender}");
             GUILayout.Label($"GPU Outflow Enabled: {gpuOutflowController != null && gpuOutflowController.gpuOutflowEnabled}");
+            GUILayout.Label($"GPU Infinite Supply: {gpuOutflowController != null && gpuOutflowController.infinitePaintSupplyForTuning}");
             GUILayout.Label($"GPU Outflow Capacity: {(gpuOutflowController != null ? gpuOutflowController.OutflowCapacity : 0)}");
             GUILayout.Label($"GPU Outflow Active: {(gpuOutflowController != null ? gpuOutflowController.ActiveOutflowParticles : 0)}");
+            GUILayout.Label($"GPU Paint Remaining: {(gpuOutflowController != null ? gpuOutflowController.RemainingPaintQuantityUnits : 0f):F2} units / {(gpuOutflowController != null ? gpuOutflowController.RemainingPaintFraction * 100f : 0f):F1}%");
+            GUILayout.Label($"GPU Physical Flow: {(gpuOutflowController != null ? gpuOutflowController.CurrentPhysicalFlowRateCubicMetersPerSecond : 0f):F6} m3/s");
             GUILayout.Label($"GPU Extraction Budget/Substep: {(gpuOutflowController != null ? gpuOutflowController.CurrentExtractionBudget : 0)}");
             GUILayout.Label($"GPU Outflow Radius: {(gpuOutflowController != null ? gpuOutflowController.EffectiveOutflowParticleRadius : 0f):F4}");
             GUILayout.Label($"GPU Drain Capture Radius: {(gpuOutflowController != null ? gpuOutflowController.EffectiveDrainCaptureRadius : 0f):F4}");
@@ -193,6 +201,16 @@ namespace SwingingPaint.BucketFluid.Rendering
             if (fluidRenderer == null)
             {
                 fluidRenderer = GetComponentInParent<GPUFluidRenderer>();
+            }
+
+            if (fluidVolumeRenderer == null)
+            {
+                fluidVolumeRenderer = GetComponentInChildren<BucketFluidVolumeRenderer>();
+            }
+
+            if (fluidVolumeRenderer == null)
+            {
+                fluidVolumeRenderer = GetComponentInParent<BucketFluidVolumeRenderer>();
             }
 
             if (paintEmitter == null)

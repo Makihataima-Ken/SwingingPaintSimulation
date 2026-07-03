@@ -1,8 +1,12 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 using SwingingPaint.BucketFluid;
 using SwingingPaint.BucketFluid.Core;
 using SwingingPaint.BucketFluid.Rendering;
 using SwingingPaint.Paint;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 /// <summary>
 /// Editor-safe scene helper for assigning the Swinging Paint bucket rig references by name.
@@ -24,6 +28,8 @@ using SwingingPaint.Paint;
 [ExecuteAlways]
 public class BucketRigSceneSetup : MonoBehaviour
 {
+    private const string FluidVolumeMaterialPath = "Assets/Shaders/BucketFluid/BucketFluidVolume.mat";
+
     [Tooltip("Automatically reassign references when values change in the editor.")]
     public bool autoAssignOnValidate = true;
 
@@ -95,6 +101,7 @@ public class BucketRigSceneSetup : MonoBehaviour
         if (bucketRig != null)
         {
             EnsureBucketVisual(bucketRig, bucketVisual);
+            EnsureFluidVolume(bucketRig, boundary);
             EnsureBucketOrientationController(
                 bucketRig,
                 pivotPoint,
@@ -123,6 +130,7 @@ public class BucketRigSceneSetup : MonoBehaviour
             foreach (Renderer renderer in importedBucketVisual.GetComponentsInChildren<Renderer>(true))
             {
                 renderer.enabled = true;
+                NormalizeTransparentBucketMaterials(renderer);
             }
 
             return;
@@ -148,6 +156,127 @@ public class BucketRigSceneSetup : MonoBehaviour
 
         proceduralBucket.boundary = bucketRig.GetComponent<BucketFluidBoundary>();
         proceduralBucket.Rebuild();
+    }
+
+    private static void EnsureFluidVolume(Transform bucketRig, BucketFluidBoundary boundary)
+    {
+        if (bucketRig == null || boundary == null)
+        {
+            return;
+        }
+
+        Transform fluidVolume = bucketRig.Find("FluidVolume");
+        if (fluidVolume == null)
+        {
+            GameObject fluidVolumeObject = new GameObject("FluidVolume");
+            fluidVolumeObject.transform.SetParent(bucketRig, false);
+            fluidVolume = fluidVolumeObject.transform;
+        }
+
+        fluidVolume.localPosition = Vector3.zero;
+        fluidVolume.localRotation = Quaternion.identity;
+        fluidVolume.localScale = Vector3.one;
+
+        if (fluidVolume.GetComponent<MeshFilter>() == null)
+        {
+            fluidVolume.gameObject.AddComponent<MeshFilter>();
+        }
+
+        if (fluidVolume.GetComponent<MeshRenderer>() == null)
+        {
+            fluidVolume.gameObject.AddComponent<MeshRenderer>();
+        }
+
+        BucketFluidVolumeRenderer volumeRenderer = fluidVolume.GetComponent<BucketFluidVolumeRenderer>();
+        if (volumeRenderer == null)
+        {
+            volumeRenderer = fluidVolume.gameObject.AddComponent<BucketFluidVolumeRenderer>();
+        }
+
+        GPUFluidRenderer particleRenderer = bucketRig.GetComponentInChildren<GPUFluidRenderer>(true);
+        GPUFluidOutflowController outflowController = bucketRig.GetComponentInChildren<GPUFluidOutflowController>(true);
+
+        volumeRenderer.boundary = boundary;
+        volumeRenderer.settings = bucketRig.GetComponent<BucketFluidSettings>();
+        volumeRenderer.outflowController = outflowController;
+        volumeRenderer.particleRenderer = particleRenderer;
+        volumeRenderer.renderEnabled = true;
+        volumeRenderer.disableParticleCloudInPresentation = true;
+
+        if (volumeRenderer.volumeMaterial == null)
+        {
+            volumeRenderer.volumeMaterial = LoadFluidVolumeMaterial();
+        }
+
+        if (particleRenderer != null)
+        {
+            particleRenderer.renderEnabled = false;
+        }
+    }
+
+    private static Material LoadFluidVolumeMaterial()
+    {
+#if UNITY_EDITOR
+        return AssetDatabase.LoadAssetAtPath<Material>(FluidVolumeMaterialPath);
+#else
+        return null;
+#endif
+    }
+
+    private static void NormalizeTransparentBucketMaterials(Renderer renderer)
+    {
+        if (renderer == null || !Application.isPlaying)
+        {
+            return;
+        }
+
+        Material[] materials = renderer.materials;
+        for (int i = 0; i < materials.Length; i++)
+        {
+            ConfigureTransparentBucketMaterial(materials[i]);
+        }
+
+        renderer.materials = materials;
+    }
+
+    private static void ConfigureTransparentBucketMaterial(Material material)
+    {
+        if (material == null)
+        {
+            return;
+        }
+
+        if (material.HasProperty("_Color"))
+        {
+            Color color = material.color;
+            color.a = Mathf.Min(color.a, 0.62f);
+            material.color = color;
+        }
+
+        if (material.HasProperty("_Mode"))
+        {
+            material.SetFloat("_Mode", 3f);
+        }
+
+        if (material.HasProperty("_SrcBlend"))
+        {
+            material.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+        }
+
+        if (material.HasProperty("_DstBlend"))
+        {
+            material.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+        }
+
+        if (material.HasProperty("_ZWrite"))
+        {
+            material.SetInt("_ZWrite", 0);
+        }
+
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.EnableKeyword("_ALPHABLEND_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        material.renderQueue = (int)RenderQueue.Transparent;
     }
 
     private static Transform EnsurePaintHole(

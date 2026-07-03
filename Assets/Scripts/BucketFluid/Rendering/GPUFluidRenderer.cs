@@ -19,6 +19,8 @@ namespace SwingingPaint.BucketFluid.Rendering
         private static readonly int BucketLocalToWorldId = Shader.PropertyToID("_BucketLocalToWorld");
         private static readonly int ParticleSizeId = Shader.PropertyToID("_ParticleSize");
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+        private static readonly int CameraRightId = Shader.PropertyToID("_CameraRight");
+        private static readonly int CameraUpId = Shader.PropertyToID("_CameraUp");
 
         [Header("References")]
         public GPUFluidSimulator simulator;
@@ -33,7 +35,7 @@ namespace SwingingPaint.BucketFluid.Rendering
         public bool renderEnabled = true;
 
         [Tooltip("Fallback visual particle size when BucketFluidSettings is not available.")]
-        public float renderRadius = 0.045f;
+        public float renderRadius = 0.055f;
 
         public bool HasRenderableBuffers =>
             simulator != null &&
@@ -246,6 +248,10 @@ namespace SwingingPaint.BucketFluid.Rendering
             _propertyBlock.SetMatrix(BucketLocalToWorldId, simulator.BucketLocalToWorldMatrix);
             _propertyBlock.SetFloat(ParticleSizeId, GetParticleVisualSize());
             _propertyBlock.SetColor(BaseColorId, GetParticleColor());
+
+            Camera camera = Camera.main;
+            _propertyBlock.SetVector(CameraRightId, camera != null ? camera.transform.right : Vector3.right);
+            _propertyBlock.SetVector(CameraUpId, camera != null ? camera.transform.up : Vector3.up);
         }
 
         private Bounds GetWorldRenderBounds()

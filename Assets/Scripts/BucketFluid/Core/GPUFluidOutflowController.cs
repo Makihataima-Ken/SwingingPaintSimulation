@@ -21,6 +21,8 @@ namespace SwingingPaint.BucketFluid.Core
         private const int ThreadGroupSize = 64;
         private const int CounterCount = 9;
         private const int MaxVirtualHoleCount = 4;
+        private const float MinPaintQuantityUnitToCubicMeters = 0.000001f;
+        private const float MaxPaintQuantityUnitToCubicMeters = 0.01f;
 
         private static readonly int BucketParticlesId = Shader.PropertyToID("bucketParticles");
         private static readonly int OutflowParticlesId = Shader.PropertyToID("outflowParticles");
@@ -177,7 +179,7 @@ namespace SwingingPaint.BucketFluid.Core
         [Min(0f)]
         public float viscosityFlowDamping = 0.8f;
         [Min(0.000001f)]
-        public float paintQuantityUnitToCubicMeters = 0.00001f;
+        public float paintQuantityUnitToCubicMeters = 0.00005f;
         [Min(0.000001f)]
         public float particleVolumeMultiplier = 1f;
         [Min(1)]
@@ -267,7 +269,14 @@ namespace SwingingPaint.BucketFluid.Core
         public float AverageOutflowDensity { get; private set; }
         public float CurrentPhysicalFlowRateCubicMetersPerSecond { get; private set; }
         public float CurrentPhysicalExitSpeed { get; private set; }
+        public float InitialPaintVolumeCubicMeters { get; private set; }
         public float RemainingPaintVolumeCubicMeters { get; private set; }
+        public float RemainingPaintQuantityUnits =>
+            RemainingPaintVolumeCubicMeters / GetSafePaintQuantityUnitToCubicMeters();
+        public float RemainingPaintFraction =>
+            InitialPaintVolumeCubicMeters > 0f
+                ? Mathf.Clamp01(RemainingPaintVolumeCubicMeters / InitialPaintVolumeCubicMeters)
+                : _paintVolumeInitialized ? 0f : 1f;
         public bool GpuCanvasWritesEnabled => paintSurface != null && paintSurface.GpuCanvasModeEnabled;
         public bool CanRunPrimaryOutflow => gpuOutflowEnabled && outflowComputeShader != null && _kernelsResolved;
         public float EffectiveOutflowParticleRadius => GetOutflowParticleRadius(
@@ -938,13 +947,28 @@ namespace SwingingPaint.BucketFluid.Core
 
         private float GetPhysicalPaintHead()
         {
-            if (boundary == null)
+            float fillPercent = settings != null ? settings.fillHeightPercent : 0.55f;
+
+            if (!infinitePaintSupplyForTuning)
             {
-                return Mathf.Max(0.01f, settings != null ? settings.fillHeightPercent * 0.25f : 0.15f);
+                EnsurePaintVolumeInitialized();
+                float remainingFraction = RemainingPaintFraction;
+                if (remainingFraction <= 0f)
+                {
+                    return 0f;
+                }
+
+                fillPercent *= remainingFraction;
             }
 
-            float fillPercent = settings != null ? settings.fillHeightPercent : 0.55f;
-            return Mathf.Max(0.005f, boundary.Height * Mathf.Clamp01(fillPercent));
+            if (boundary == null)
+            {
+                float fallbackHead = Mathf.Max(0f, fillPercent * 0.25f);
+                return fallbackHead > 0f ? Mathf.Max(0.01f, fallbackHead) : 0f;
+            }
+
+            float head = boundary.Height * Mathf.Clamp01(fillPercent);
+            return head > 0f ? Mathf.Max(0.005f, head) : 0f;
         }
 
         private float GetPhysicalExitSpeed(float paintHead, float gravityMagnitude, float viscosity)
@@ -1026,8 +1050,43 @@ namespace SwingingPaint.BucketFluid.Core
         private void ResetPaintVolume()
         {
             float quantity = physicsSettings != null ? physicsSettings.PaintQuantity : 100f;
-            RemainingPaintVolumeCubicMeters = Mathf.Max(0f, quantity) * Mathf.Max(0.000001f, paintQuantityUnitToCubicMeters);
+            float logicalVolume = Mathf.Max(0f, quantity) * GetSafePaintQuantityUnitToCubicMeters();
+            float visibleBucketVolume = GetVisibleBucketParticleVolume();
+
+            if (visibleBucketVolume > 0f)
+            {
+                logicalVolume = logicalVolume > 0f
+                    ? Mathf.Min(logicalVolume, visibleBucketVolume)
+                    : 0f;
+            }
+
+            InitialPaintVolumeCubicMeters = Mathf.Max(0f, logicalVolume);
+            RemainingPaintVolumeCubicMeters = InitialPaintVolumeCubicMeters;
             _paintVolumeInitialized = true;
+        }
+
+        private float GetVisibleBucketParticleVolume()
+        {
+            int particleCount = 0;
+            if (simulator != null)
+            {
+                particleCount = simulator.InitializedParticleCount > 0
+                    ? simulator.InitializedParticleCount
+                    : simulator.TargetParticleCount;
+            }
+            else if (settings != null)
+            {
+                particleCount = settings.ActiveParticleCount;
+            }
+
+            if (particleCount <= 0)
+            {
+                return 0f;
+            }
+
+            float bucketParticleRadius = settings != null ? settings.particleRadius : 0.035f;
+            float outflowParticleRadius = GetOutflowParticleRadius(bucketParticleRadius, GetHoleDiameter());
+            return particleCount * GetOutflowParticleVolume(outflowParticleRadius);
         }
 
         private static float GetEffectiveOutflowRate(float flowRate, float diameter)
@@ -1055,6 +1114,14 @@ namespace SwingingPaint.BucketFluid.Core
         private float GetOutflowSpawnSpacing(float outflowParticleRadius)
         {
             return Mathf.Max(outflowParticleRadius * 0.8f, outflowSpawnSpacing);
+        }
+
+        private float GetSafePaintQuantityUnitToCubicMeters()
+        {
+            return Mathf.Clamp(
+                paintQuantityUnitToCubicMeters,
+                MinPaintQuantityUnitToCubicMeters,
+                MaxPaintQuantityUnitToCubicMeters);
         }
 
         private float GetEffectiveStreamBreakDistance(float outflowParticleRadius)
@@ -1169,7 +1236,7 @@ namespace SwingingPaint.BucketFluid.Core
             minimumContinuousStreamExtractions = Mathf.Clamp(minimumContinuousStreamExtractions, 1, 64);
             dischargeCoefficient = Mathf.Clamp(dischargeCoefficient, 0.05f, 1f);
             viscosityFlowDamping = Mathf.Max(0f, viscosityFlowDamping);
-            paintQuantityUnitToCubicMeters = Mathf.Max(0.000001f, paintQuantityUnitToCubicMeters);
+            paintQuantityUnitToCubicMeters = GetSafePaintQuantityUnitToCubicMeters();
             particleVolumeMultiplier = Mathf.Max(0.000001f, particleVolumeMultiplier);
             maxPhysicalParticlesPerStep = Mathf.Max(1, maxPhysicalParticlesPerStep);
             physicalEmissionTurbulence = Mathf.Clamp01(physicalEmissionTurbulence);

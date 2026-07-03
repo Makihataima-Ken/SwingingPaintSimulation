@@ -7,25 +7,26 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: FluidParticleInstanced
-  m_Shader: {fileID: 4800000, guid: 60bff391853245a592f97988680061dc, type: 3}
+  m_Name: BucketFluidVolume
+  m_Shader: {fileID: 4800000, guid: 4c5d6e7f80914233aabbccddeeff0011, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
   m_InvalidKeywords: []
   m_LightmapFlags: 4
-  m_EnableInstancingVariants: 1
+  m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
-  m_CustomRenderQueue: -1
+  m_CustomRenderQueue: 2995
   stringTagMap: {}
   disabledShaderPasses: []
-  m_LockedProperties: 
+  m_LockedProperties:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _ParticleSize: 0.055
+    - _Smoothness: 0.75
     m_Colors:
-    - _BaseColor: {r: 0.05, g: 0.22, b: 0.95, a: 0.92}
+    - _BaseColor: {r: 0.05, g: 0.22, b: 0.95, a: 0.94}
+    - _TopColor: {r: 0.18, g: 0.36, b: 1, a: 0.94}
   m_BuildTextureStacks: []
