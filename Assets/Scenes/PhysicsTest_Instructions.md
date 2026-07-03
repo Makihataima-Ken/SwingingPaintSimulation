@@ -12,7 +12,7 @@ Use this scene to test only the manual bucket pendulum motion before adding pain
 6. Add `Pendulum` to `PhysicsTestRoot`.
 7. Assign `Anchor` to `Pendulum.anchorTransform`.
 8. Assign `Bucket` to `Pendulum.bucketTransform`.
-9. Optional: add `RopeRenderer` to `PhysicsTestRoot` and assign the same `Anchor` and `Bucket` transforms.
+9. Optional: add `RopeRenderer` to `PhysicsTestRoot`; it will render a procedural mesh rope through MeshFilter/MeshRenderer. Assign the same `Anchor` and `Bucket` transforms.
 10. Optional: add `PendulumPhysicsTestController` to `PhysicsTestRoot` and assign the `Pendulum`.
 
 ## Inspector Values To Test
@@ -48,4 +48,4 @@ Add `PendulumPhysicsTestController` to the scene to switch presets during Play M
 - Press `5` for Low Damping.
 - Press `6` for High Damping.
 
-This test setup uses only transforms, manual pendulum math, and optional LineRenderer visuals.
+This test setup uses only transforms, manual pendulum math, and optional procedural mesh rope visuals.
