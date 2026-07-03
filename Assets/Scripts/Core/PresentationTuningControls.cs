@@ -20,6 +20,9 @@ namespace SwingingPaint.Core
     [AddComponentMenu("SwingingPaint/Presentation Tuning Controls")]
     public class PresentationTuningControls : MonoBehaviour
     {
+        private const float SafeMaxImpactRadius = 0.58f;
+        private const float SafeMaxDirectionalStretch = 2.65f;
+
         [Header("00 - How To Use")]
         [Tooltip("When enabled, changing values here applies them to PhysicsSettings, fluid, outflow, renderer, and canvas. Keep disabled when tuning lower-level components directly.")]
         public bool autoApply = false;
@@ -116,14 +119,24 @@ namespace SwingingPaint.Core
         public float splatterStrength = 0.65f;
 
         [Tooltip("Stretches marks along the incoming velocity direction.")]
-        [Range(1f, 4f)]
+        [Range(1f, SafeMaxDirectionalStretch)]
         public float directionalStretch = 1.8f;
 
         [Tooltip("Paint sliding/dripping strength on tilted or low-absorption surfaces.")]
         [Range(0f, 3f)]
         public float slidingStrength = 0.35f;
 
-        [Header("03B - Physical Pour Model")]
+        [Header("03C - Stateful Canvas Paint")]
+        [Tooltip("When enabled, GPU deposition writes wet pigment/thickness state and the canvas dries/composites over time.")]
+        public bool statefulCanvasPaint = true;
+
+        [Tooltip("Canvas paint simulation quality. Development is cheapest and is the default.")]
+        public CanvasPaintQualityPreset canvasQuality = CanvasPaintQualityPreset.Development;
+
+        [Tooltip("Optional material preset controlling absorption, spread, drying, mixing, splatter, and sliding.")]
+        public SurfaceMaterialProfile surfaceMaterialProfile;
+
+        [Header("03D - Physical Pour Model")]
         [Tooltip("Torricelli discharge coefficient. Around 0.6 is realistic for a simple hole.")]
         [Range(0.05f, 1f)]
         public float dischargeCoefficient = 0.62f;
@@ -293,6 +306,9 @@ namespace SwingingPaint.Core
                 splatterStrength = paintSurface.splatterStrength;
                 directionalStretch = paintSurface.directionalStretch;
                 slidingStrength = paintSurface.slidingStrength;
+                statefulCanvasPaint = paintSurface.statefulGpuPaint;
+                canvasQuality = paintSurface.qualityPreset;
+                surfaceMaterialProfile = paintSurface.surfaceMaterialProfile;
             }
 
             if (outflowController != null)
@@ -377,6 +393,10 @@ namespace SwingingPaint.Core
                 paintSurface.splatterStrength = splatterStrength;
                 paintSurface.directionalStretch = directionalStretch;
                 paintSurface.slidingStrength = slidingStrength;
+                paintSurface.statefulGpuPaint = statefulCanvasPaint;
+                paintSurface.qualityPreset = canvasQuality;
+                paintSurface.surfaceMaterialProfile = surfaceMaterialProfile;
+                paintSurface.EnsureGpuPaintResources();
                 MarkDirty(paintSurface);
             }
 
@@ -439,6 +459,11 @@ namespace SwingingPaint.Core
                 outflowRenderer = FindObjectOfType<GPUOutflowRenderer>();
             }
 
+            if (paintSurface == null && outflowController != null)
+            {
+                paintSurface = outflowController.paintSurface;
+            }
+
             if (paintSurface == null)
             {
                 paintSurface = FindObjectOfType<CanvasPaintSurface>();
@@ -461,14 +486,15 @@ namespace SwingingPaint.Core
             streamTrailLength = Mathf.Clamp(streamTrailLength, 0.5f, 4f);
             streamOpacity = Mathf.Clamp(streamOpacity, 0f, 2f);
             surfaceAbsorption = Mathf.Clamp01(surfaceAbsorption);
-            maxImpactRadius = Mathf.Max(0.001f, maxImpactRadius);
+            maxImpactRadius = Mathf.Clamp(maxImpactRadius, 0.001f, SafeMaxImpactRadius);
             markOpacity = Mathf.Clamp(markOpacity, 0f, 2f);
             flowSpreadBoost = Mathf.Clamp(flowSpreadBoost, 0f, 3f);
             surfaceSpread = Mathf.Clamp(surfaceSpread, 0.05f, 3f);
             edgeIrregularity = Mathf.Clamp01(edgeIrregularity);
             splatterStrength = Mathf.Clamp(splatterStrength, 0f, 3f);
-            directionalStretch = Mathf.Clamp(directionalStretch, 1f, 4f);
+            directionalStretch = Mathf.Clamp(directionalStretch, 1f, SafeMaxDirectionalStretch);
             slidingStrength = Mathf.Clamp(slidingStrength, 0f, 3f);
+            canvasQuality = (CanvasPaintQualityPreset)Mathf.Clamp((int)canvasQuality, 0, 2);
             dischargeCoefficient = Mathf.Clamp(dischargeCoefficient, 0.05f, 1f);
             viscosityFlowDamping = Mathf.Clamp(viscosityFlowDamping, 0f, 5f);
             fallingAirTurbulence = Mathf.Clamp(fallingAirTurbulence, 0f, 2f);
@@ -527,6 +553,7 @@ namespace SwingingPaint.Core
         {
             return new TuningSnapshot
             {
+                snapshotVersion = 1,
                 autoApply = autoApply,
                 autoResolveReferences = autoResolveReferences,
                 paintColor = paintColor,
@@ -550,6 +577,9 @@ namespace SwingingPaint.Core
                 splatterStrength = splatterStrength,
                 directionalStretch = directionalStretch,
                 slidingStrength = slidingStrength,
+                statefulCanvasPaint = statefulCanvasPaint,
+                canvasQuality = canvasQuality,
+                surfaceMaterialProfileAssetPath = surfaceMaterialProfile != null ? AssetDatabase.GetAssetPath(surfaceMaterialProfile) : string.Empty,
                 dischargeCoefficient = dischargeCoefficient,
                 viscosityFlowDamping = viscosityFlowDamping,
                 fallingAirTurbulence = fallingAirTurbulence,
@@ -589,6 +619,11 @@ namespace SwingingPaint.Core
             splatterStrength = snapshot.splatterStrength;
             directionalStretch = snapshot.directionalStretch;
             slidingStrength = snapshot.slidingStrength;
+            statefulCanvasPaint = snapshot.snapshotVersion >= 1 ? snapshot.statefulCanvasPaint : true;
+            canvasQuality = snapshot.snapshotVersion >= 1 ? snapshot.canvasQuality : CanvasPaintQualityPreset.Development;
+            surfaceMaterialProfile = string.IsNullOrEmpty(snapshot.surfaceMaterialProfileAssetPath)
+                ? null
+                : AssetDatabase.LoadAssetAtPath<SurfaceMaterialProfile>(snapshot.surfaceMaterialProfileAssetPath);
             dischargeCoefficient = snapshot.dischargeCoefficient;
             viscosityFlowDamping = snapshot.viscosityFlowDamping;
             fallingAirTurbulence = snapshot.fallingAirTurbulence;
@@ -606,6 +641,7 @@ namespace SwingingPaint.Core
         [System.Serializable]
         private struct TuningSnapshot
         {
+            public int snapshotVersion;
             public bool autoApply;
             public bool autoResolveReferences;
             public Color paintColor;
@@ -629,6 +665,9 @@ namespace SwingingPaint.Core
             public float splatterStrength;
             public float directionalStretch;
             public float slidingStrength;
+            public bool statefulCanvasPaint;
+            public CanvasPaintQualityPreset canvasQuality;
+            public string surfaceMaterialProfileAssetPath;
             public float dischargeCoefficient;
             public float viscosityFlowDamping;
             public float fallingAirTurbulence;

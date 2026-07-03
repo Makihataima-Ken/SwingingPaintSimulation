@@ -66,6 +66,9 @@ RWStructuredBuffer<uint> outflowCellIndices;
 RWStructuredBuffer<uint> outflowCounters;
 RWStructuredBuffer<uint> indirectArgs;
 RWTexture2D<float4> canvasTexture;
+RWTexture2D<float4> canvasWetPigmentTexture;
+RWTexture2D<float4> canvasDryPigmentTexture;
+RWTexture2D<float4> canvasPaintStateTexture;
 
 uint BucketParticleCount;
 uint OutflowCapacity;
@@ -151,11 +154,22 @@ float CanvasEdgeIrregularity;
 float CanvasSplatterStrength;
 float CanvasDirectionalStretch;
 float CanvasSlipStrength;
+uint CanvasStatefulMode;
+int CanvasBrushRadiusPixelCap;
+float CanvasMaterialRoughness;
+float CanvasMaterialBeading;
 
 static const float Epsilon = 0.00001;
 static const float PressureCorrectionScale = 0.010;
 static const float CohesionCorrectionScale = 0.035;
 static const float SurfaceTensionCorrectionScale = 0.018;
+static const float MaxCanvasDepositAmount = 1.15;
+static const float MaxCanvasDepositMassPerPixel = 0.85;
+static const float MaxCanvasThickness = 12.0;
+static const float MaxCanvasImpactRadiusWorld = 0.58;
+static const float MaxCanvasDirectionalStretch = 2.65;
+static const float MaxCanvasDripTravelPixels = 58.0;
+static const float MaxCanvasDripSteps = 12.0;
 
 float3 ClampVectorLength(float3 value, float maxLength)
 {
@@ -293,6 +307,44 @@ bool TryGetCanvasUV(float3 worldPosition, out float2 uv)
     return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
 }
 
+void DepositCanvasPixel(
+    int2 pixel,
+    float4 color,
+    float alpha,
+    float wetness,
+    float thicknessScale)
+{
+    alpha = saturate(alpha);
+    if (alpha <= Epsilon)
+    {
+        return;
+    }
+
+    if (CanvasStatefulMode != 0u)
+    {
+        float mass = min(alpha * max(0.12, thicknessScale), MaxCanvasDepositMassPerPixel);
+        float4 wet = canvasWetPigmentTexture[pixel];
+        float4 state = canvasPaintStateTexture[pixel];
+
+        wet.rgb = max(float3(0.0, 0.0, 0.0), wet.rgb + color.rgb * mass);
+        wet.a = min(MaxCanvasThickness, max(0.0, wet.a) + mass);
+        state.r = saturate(max(state.r, wetness) + mass * 0.18);
+        state.g = min(MaxCanvasThickness, max(0.0, state.g) + mass);
+        state.a = saturate(max(state.a, state.r));
+
+        canvasWetPigmentTexture[pixel] = wet;
+        canvasPaintStateTexture[pixel] = state;
+    }
+    else
+    {
+        float4 existing = canvasTexture[pixel];
+        float3 blended = lerp(existing.rgb, color.rgb, alpha);
+        canvasTexture[pixel] = float4(blended, saturate(existing.a + alpha * 0.75));
+    }
+
+    InterlockedAdd(outflowCounters[4], 1u);
+}
+
 void DepositCanvasBrushStamp(
     float2 uv,
     float radius,
@@ -317,19 +369,26 @@ void DepositCanvasBrushStamp(
     float impactFactor = saturate(impactSpeed / max(MaxFallingSpeed, 0.001));
     float flowFactor = 1.0 + max(0.0, PaintFlowRate) * CanvasFlowSpreadBoost + impactFactor * 0.75;
     float absorptionFactor = saturate(1.0 - CanvasAbsorption * 0.75);
+    float safeMinImpactRadius = min(CanvasMinImpactRadius, MaxCanvasImpactRadiusWorld);
+    float safeMaxImpactRadius = max(safeMinImpactRadius, min(CanvasMaxImpactRadius, MaxCanvasImpactRadiusWorld));
     float spreadWorldRadius = radius * max(0.05, CanvasSurfaceSpread) * lerp(1.05, 2.7, viscosityFactor) * flowFactor * absorptionFactor;
-    spreadWorldRadius = clamp(spreadWorldRadius * max(0.05, radiusScale), CanvasMinImpactRadius, CanvasMaxImpactRadius);
+    spreadWorldRadius *= lerp(1.0, 0.72, saturate(CanvasMaterialBeading));
+    spreadWorldRadius = clamp(spreadWorldRadius * max(0.05, radiusScale), safeMinImpactRadius, safeMaxImpactRadius);
 
     float2 safeCanvasSize = max(CanvasWorldSize, float2(0.001, 0.001));
     int radiusPixelsX = max(1, (int)ceil(spreadWorldRadius / safeCanvasSize.x * width));
     int radiusPixelsY = max(1, (int)ceil(spreadWorldRadius / safeCanvasSize.y * height));
-    float opacity = saturate(color.a * wetness * max(0.05, amount) * CanvasOpacityMultiplier * max(0.0, opacityScale));
+    int radiusCap = max(1, CanvasBrushRadiusPixelCap);
+    radiusPixelsX = min(radiusPixelsX, radiusCap);
+    radiusPixelsY = min(radiusPixelsY, radiusCap);
+    float safeAmount = clamp(amount, 0.02, MaxCanvasDepositAmount);
+    float opacity = saturate(color.a * wetness * safeAmount * CanvasOpacityMultiplier * max(0.0, opacityScale));
     float3 localVelocity = mul(CanvasWorldToLocal, float4(impactVelocityWorld, 0.0)).xyz;
     float2 tangentDirection = dot(localVelocity.xz, localVelocity.xz) > Epsilon
         ? normalize(localVelocity.xz)
         : float2(1.0, 0.0);
     float2 crossDirection = float2(-tangentDirection.y, tangentDirection.x);
-    float stretch = lerp(1.0, max(1.0, CanvasDirectionalStretch), impactFactor);
+    float stretch = lerp(1.0, min(max(1.0, CanvasDirectionalStretch), MaxCanvasDirectionalStretch), impactFactor);
 
     [loop]
     for (int y = -radiusPixelsY; y <= radiusPixelsY; y++)
@@ -351,7 +410,7 @@ void DepositCanvasBrushStamp(
             float distance = sqrt(across * across + (along * along) / max(1.0, stretch * stretch));
             uint edgeSeed = (uint)(pixel.x * 1973 + pixel.y * 9277) + FrameIndex * 26699u;
             float edgeNoise = (Hash01(edgeSeed) - 0.5) *
-                saturate(CanvasEdgeIrregularity) * 0.42;
+                saturate(CanvasEdgeIrregularity * lerp(0.65, 1.35, saturate(CanvasMaterialRoughness))) * 0.42;
             float edgeLimit = 1.0 + edgeNoise;
             if (distance > edgeLimit)
             {
@@ -361,10 +420,7 @@ void DepositCanvasBrushStamp(
             float falloff = saturate(1.0 - distance / max(edgeLimit, 0.1));
             falloff *= falloff;
             float alpha = saturate(opacity * falloff * (1.0 - CanvasAbsorption * 0.4));
-            float4 existing = canvasTexture[pixel];
-            float3 blended = lerp(existing.rgb, color.rgb, alpha);
-            canvasTexture[pixel] = float4(blended, saturate(existing.a + alpha * 0.75));
-            InterlockedAdd(outflowCounters[4], 1u);
+            DepositCanvasPixel(pixel, color, alpha, wetness, falloff);
         }
     }
 }
@@ -380,19 +436,26 @@ void DepositCanvasSplat(float2 uv, float radius, float4 color, float amount, flo
     float impactFactor = saturate(impactSpeed / max(MaxFallingSpeed, 0.001));
     float flowFactor = 1.0 + max(0.0, PaintFlowRate) * CanvasFlowSpreadBoost + impactFactor * 0.75;
     float absorptionFactor = saturate(1.0 - CanvasAbsorption * 0.75);
+    float safeMinImpactRadius = min(CanvasMinImpactRadius, MaxCanvasImpactRadiusWorld);
+    float safeMaxImpactRadius = max(safeMinImpactRadius, min(CanvasMaxImpactRadius, MaxCanvasImpactRadiusWorld));
     float spreadWorldRadius = radius * max(0.05, CanvasSurfaceSpread) * lerp(1.05, 2.7, viscosityFactor) * flowFactor * absorptionFactor;
-    spreadWorldRadius = clamp(spreadWorldRadius, CanvasMinImpactRadius, CanvasMaxImpactRadius);
+    spreadWorldRadius *= lerp(1.0, 0.72, saturate(CanvasMaterialBeading));
+    spreadWorldRadius = clamp(spreadWorldRadius, safeMinImpactRadius, safeMaxImpactRadius);
 
     float2 safeCanvasSize = max(CanvasWorldSize, float2(0.001, 0.001));
     int radiusPixelsX = max(1, (int)ceil(spreadWorldRadius / safeCanvasSize.x * width));
     int radiusPixelsY = max(1, (int)ceil(spreadWorldRadius / safeCanvasSize.y * height));
-    float opacity = saturate(color.a * wetness * max(0.05, amount) * CanvasOpacityMultiplier);
+    int radiusCap = max(1, CanvasBrushRadiusPixelCap);
+    radiusPixelsX = min(radiusPixelsX, radiusCap);
+    radiusPixelsY = min(radiusPixelsY, radiusCap);
+    float safeAmount = clamp(amount, 0.02, MaxCanvasDepositAmount);
+    float opacity = saturate(color.a * wetness * safeAmount * CanvasOpacityMultiplier);
     float3 localVelocity = mul(CanvasWorldToLocal, float4(impactVelocityWorld, 0.0)).xyz;
     float2 tangentDirection = dot(localVelocity.xz, localVelocity.xz) > Epsilon
         ? normalize(localVelocity.xz)
         : float2(1.0, 0.0);
     float2 crossDirection = float2(-tangentDirection.y, tangentDirection.x);
-    float stretch = lerp(1.0, max(1.0, CanvasDirectionalStretch), impactFactor);
+    float stretch = lerp(1.0, min(max(1.0, CanvasDirectionalStretch), MaxCanvasDirectionalStretch), impactFactor);
 
     [loop]
     for (int y = -radiusPixelsY; y <= radiusPixelsY; y++)
@@ -414,7 +477,7 @@ void DepositCanvasSplat(float2 uv, float radius, float4 color, float amount, flo
             float distance = sqrt(across * across + (along * along) / max(1.0, stretch * stretch));
             uint edgeSeed = (uint)(pixel.x * 1973 + pixel.y * 9277) + FrameIndex * 26699u;
             float edgeNoise = (Hash01(edgeSeed) - 0.5) *
-                saturate(CanvasEdgeIrregularity) * 0.42;
+                saturate(CanvasEdgeIrregularity * lerp(0.65, 1.35, saturate(CanvasMaterialRoughness))) * 0.42;
             float edgeLimit = 1.0 + edgeNoise;
             if (distance > edgeLimit)
             {
@@ -424,14 +487,11 @@ void DepositCanvasSplat(float2 uv, float radius, float4 color, float amount, flo
             float falloff = saturate(1.0 - distance / max(edgeLimit, 0.1));
             falloff *= falloff;
             float alpha = saturate(opacity * falloff * (1.0 - CanvasAbsorption * 0.4));
-            float4 existing = canvasTexture[pixel];
-            float3 blended = lerp(existing.rgb, color.rgb, alpha);
-            canvasTexture[pixel] = float4(blended, saturate(existing.a + alpha * 0.75));
-            InterlockedAdd(outflowCounters[4], 1u);
+            DepositCanvasPixel(pixel, color, alpha, wetness, falloff);
         }
     }
 
-    uint splatterCount = (uint)min(14.0, max(0.0, impactSpeed * CanvasSplatterStrength * viscosityFactor * (1.0 - CanvasAbsorption)));
+    uint splatterCount = (uint)min(14.0, max(0.0, impactSpeed * CanvasSplatterStrength * lerp(1.0, 1.35, saturate(CanvasMaterialBeading)) * viscosityFactor * (1.0 - CanvasAbsorption)));
     [loop]
     for (uint i = 0u; i < splatterCount; i++)
     {
@@ -448,10 +508,7 @@ void DepositCanvasSplat(float2 uv, float radius, float4 color, float amount, flo
         }
 
         float alpha = saturate(opacity * 0.25 * Hash01(i * 2971u + 13u));
-        float4 existing = canvasTexture[pixel];
-        float3 blended = lerp(existing.rgb, color.rgb, alpha);
-        canvasTexture[pixel] = float4(blended, saturate(existing.a + alpha * 0.5));
-        InterlockedAdd(outflowCounters[4], 1u);
+        DepositCanvasPixel(pixel, color, alpha, wetness, 0.45);
     }
 
     float3 localGravity = mul(CanvasWorldToLocal, float4(EffectiveWorldGravity, 0.0)).xyz;
@@ -461,15 +518,18 @@ void DepositCanvasSplat(float2 uv, float radius, float4 color, float amount, flo
     if (slipMagnitude > Epsilon && slipFactor > 0.001)
     {
         slipDirection /= slipMagnitude;
-        int slipSteps = (int)min(24.0, max(1.0, impactSpeed * slipFactor * 2.5));
+        float baseDripTravelPixels = max(radiusPixelsX, radiusPixelsY) * (1.0 + min(CanvasSlipStrength, 1.4) * 0.45);
+        float maxDripTravelPixels = min(MaxCanvasDripTravelPixels, max(4.0, baseDripTravelPixels));
+        int slipSteps = (int)min(MaxCanvasDripSteps, max(1.0, impactSpeed * slipFactor * 1.45));
         [loop]
         for (int step = 1; step <= slipSteps; step++)
         {
             float normalizedStep = (float)step / max(1.0, (float)slipSteps);
             float taper = (1.0 - normalizedStep);
+            float dripTravelPixels = maxDripTravelPixels * normalizedStep;
             int2 dripCenter = center + int2(
-                round(slipDirection.x * radiusPixelsX * normalizedStep * (1.0 + CanvasSlipStrength)),
-                round(slipDirection.y * radiusPixelsY * normalizedStep * (1.0 + CanvasSlipStrength)));
+                round(slipDirection.x * dripTravelPixels),
+                round(slipDirection.y * dripTravelPixels));
             int dripRadiusX = max(1, (int)round(radiusPixelsX * lerp(0.45, 0.16, normalizedStep)));
             int dripRadiusY = max(1, (int)round(radiusPixelsY * lerp(0.35, 0.10, normalizedStep)));
 
@@ -494,11 +554,8 @@ void DepositCanvasSplat(float2 uv, float radius, float4 color, float amount, flo
                         continue;
                     }
 
-                    float alpha = saturate(opacity * taper * taper * (1.0 - distance) * 0.22);
-                    float4 existing = canvasTexture[pixel];
-                    float3 blended = lerp(existing.rgb, color.rgb, alpha);
-                    canvasTexture[pixel] = float4(blended, saturate(existing.a + alpha * 0.4));
-                    InterlockedAdd(outflowCounters[4], 1u);
+                    float alpha = saturate(opacity * taper * taper * (1.0 - distance) * 0.16);
+                    DepositCanvasPixel(pixel, color, alpha, wetness, taper * 0.65);
                 }
             }
         }
@@ -536,8 +593,8 @@ void DepositCanvasStroke(
 
     float maxStrokeLength = max(CanvasMinImpactRadius * 1.5, CanvasMaxImpactRadius * 0.9);
     float strokeLength = min(travelWorld, maxStrokeLength);
-    float sampleSpacing = max(0.004, max(CanvasMinImpactRadius * 0.6, radius * 0.85));
-    int sampleCount = (int)clamp(ceil(strokeLength / sampleSpacing) + 1.0, 2.0, 7.0);
+    float sampleSpacing = max(0.004, max(CanvasMinImpactRadius * 0.45, radius * 0.62));
+    int sampleCount = (int)clamp(ceil(strokeLength / sampleSpacing) + 1.0, 2.0, 9.0);
     float2 directionWorld = movementWorld / max(travelWorld, Epsilon);
     float2 directionUv = float2(directionWorld.x / safeCanvasSize.x, directionWorld.y / safeCanvasSize.y);
 

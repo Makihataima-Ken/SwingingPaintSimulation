@@ -1,0 +1,205 @@
+// Stateful canvas paint simulation.
+// Keeps pigment state separate from the final display texture so wet paint can
+// diffuse and dry over time without immediately flattening into one color.
+
+#pragma kernel ClearCanvasState
+#pragma kernel DryAndAbsorb
+#pragma kernel DiffuseWetPigment
+#pragma kernel CompositeDisplay
+
+RWTexture2D<float4> displayTexture;
+RWTexture2D<float4> wetPigmentTexture;
+RWTexture2D<float4> dryPigmentTexture;
+RWTexture2D<float4> paintStateTexture;
+RWTexture2D<float4> scratchWetPigmentTexture;
+
+int CanvasTextureWidth;
+int CanvasTextureHeight;
+float DeltaTime;
+float Viscosity;
+float4 DrySurfaceColor;
+
+float SurfaceAbsorption;
+float SurfaceSpread;
+float SurfaceRoughness;
+float SurfaceDryingSpeed;
+float SurfaceMixingRate;
+float SurfaceWetGloss;
+float SurfaceNoiseScale;
+float SurfaceBeading;
+
+static const float Epsilon = 0.00001;
+static const float MaxPaintThickness = 12.0;
+
+bool IsInsideCanvas(uint3 id)
+{
+    return id.x < (uint)max(CanvasTextureWidth, 0) &&
+        id.y < (uint)max(CanvasTextureHeight, 0);
+}
+
+float Hash01(uint value)
+{
+    value ^= value >> 16;
+    value *= 2246822519u;
+    value ^= value >> 13;
+    value *= 3266489917u;
+    value ^= value >> 16;
+    return (float)(value & 0x00ffffffu) / 16777215.0;
+}
+
+float4 ClampPigment(float4 pigment)
+{
+    pigment.rgb = max(pigment.rgb, float3(0.0, 0.0, 0.0));
+    pigment.a = clamp(pigment.a, 0.0, MaxPaintThickness);
+    return pigment;
+}
+
+[numthreads(8, 8, 1)]
+void ClearCanvasState(uint3 id : SV_DispatchThreadID)
+{
+    if (!IsInsideCanvas(id))
+    {
+        return;
+    }
+
+    int2 pixel = int2(id.xy);
+    displayTexture[pixel] = DrySurfaceColor;
+    wetPigmentTexture[pixel] = float4(0.0, 0.0, 0.0, 0.0);
+    dryPigmentTexture[pixel] = float4(0.0, 0.0, 0.0, 0.0);
+    paintStateTexture[pixel] = float4(0.0, 0.0, 0.0, 0.0);
+    scratchWetPigmentTexture[pixel] = float4(0.0, 0.0, 0.0, 0.0);
+}
+
+[numthreads(8, 8, 1)]
+void DryAndAbsorb(uint3 id : SV_DispatchThreadID)
+{
+    if (!IsInsideCanvas(id))
+    {
+        return;
+    }
+
+    int2 pixel = int2(id.xy);
+    float4 wet = ClampPigment(wetPigmentTexture[pixel]);
+    float4 dry = ClampPigment(dryPigmentTexture[pixel]);
+    float4 state = paintStateTexture[pixel];
+    state.g = clamp(state.g, 0.0, MaxPaintThickness);
+    state.b = clamp(state.b, 0.0, MaxPaintThickness);
+
+    float wetMass = wet.a;
+    if (wetMass <= Epsilon)
+    {
+        state.r = max(0.0, state.r - DeltaTime * SurfaceDryingSpeed * 0.5);
+        state.g = max(0.0, state.g - DeltaTime * SurfaceAbsorption * 0.03);
+        state.a = saturate(state.r);
+        paintStateTexture[pixel] = state;
+        return;
+    }
+
+    float wetness = saturate(state.r);
+    float thickness = max(state.g, wetMass);
+    float viscosityResistance = 1.0 / (1.0 + max(0.0, Viscosity) * 0.5 + thickness * 0.08);
+    float absorption = saturate(SurfaceAbsorption);
+    float dryingSpeed = max(0.0, SurfaceDryingSpeed) * lerp(1.45, 0.6, SurfaceWetGloss);
+    float roughnessBoost = lerp(0.8, 1.35, saturate(SurfaceRoughness));
+    float beadingPenalty = lerp(1.0, 0.45, saturate(SurfaceBeading));
+    float dryRate = dryingSpeed * roughnessBoost * beadingPenalty * viscosityResistance;
+    float absorbRate = absorption * lerp(0.3, 1.4, wetness);
+    float transfer = min(wetMass, wetMass * (dryRate + absorbRate) * DeltaTime);
+
+    if (transfer > Epsilon)
+    {
+        float3 wetColor = wet.rgb / max(wetMass, Epsilon);
+        float dryMassBefore = dry.a;
+        float3 dryColorBefore = dryMassBefore > Epsilon ? dry.rgb / dryMassBefore : wetColor;
+        float layerInfluence = saturate(transfer * lerp(1.15, 0.45, absorption) * lerp(0.55, 1.0, wetness));
+        float3 dryLayerColor = lerp(dryColorBefore, wetColor, layerInfluence);
+
+        wet.rgb = max(float3(0.0, 0.0, 0.0), wet.rgb - wetColor * transfer);
+        wet.a = max(0.0, wet.a - transfer);
+        dry.a = min(MaxPaintThickness, dryMassBefore + transfer);
+        dry.rgb = dryLayerColor * dry.a;
+        state.b = min(MaxPaintThickness, state.b + transfer);
+    }
+
+    float dryLoss = DeltaTime * dryRate * lerp(0.35, 1.0, absorption);
+    state.r = saturate(max(wetMass, wet.a) * 0.18 + wetness - dryLoss);
+    state.g = max(0.0, thickness - transfer * lerp(0.05, 0.25, absorption));
+    state.a = saturate(state.r + wet.a * lerp(0.02, 0.08, SurfaceWetGloss));
+
+    wetPigmentTexture[pixel] = ClampPigment(wet);
+    dryPigmentTexture[pixel] = ClampPigment(dry);
+    paintStateTexture[pixel] = state;
+}
+
+[numthreads(8, 8, 1)]
+void DiffuseWetPigment(uint3 id : SV_DispatchThreadID)
+{
+    if (!IsInsideCanvas(id))
+    {
+        return;
+    }
+
+    int width = max(CanvasTextureWidth, 1);
+    int height = max(CanvasTextureHeight, 1);
+    int2 pixel = int2(id.xy);
+    int2 left = int2(max(pixel.x - 1, 0), pixel.y);
+    int2 right = int2(min(pixel.x + 1, width - 1), pixel.y);
+    int2 down = int2(pixel.x, max(pixel.y - 1, 0));
+    int2 up = int2(pixel.x, min(pixel.y + 1, height - 1));
+
+    float4 center = ClampPigment(wetPigmentTexture[pixel]);
+    float4 neighborAverage =
+        ClampPigment(wetPigmentTexture[left]) +
+        ClampPigment(wetPigmentTexture[right]) +
+        ClampPigment(wetPigmentTexture[down]) +
+        ClampPigment(wetPigmentTexture[up]);
+    neighborAverage *= 0.25;
+
+    float4 state = paintStateTexture[pixel];
+    float wetness = saturate(state.r);
+    float mass = center.a;
+    float surfaceSpread = max(0.0, SurfaceSpread);
+    float mixing = max(0.0, SurfaceMixingRate);
+    float roughnessDamping = lerp(1.0, 0.55, saturate(SurfaceRoughness));
+    float beadingDamping = lerp(1.0, 0.35, saturate(SurfaceBeading));
+    float viscosityDamping = 1.0 / (1.0 + max(0.0, Viscosity));
+    float factor = saturate(DeltaTime * 0.22 * surfaceSpread * mixing * wetness * roughnessDamping * beadingDamping * viscosityDamping);
+    factor *= saturate(mass * 2.0);
+
+    uint noiseSeed = (uint)(pixel.x * 1973 + pixel.y * 9277);
+    float noise = lerp(0.75, 1.25, Hash01(noiseSeed)) * max(0.01, SurfaceNoiseScale);
+    factor = saturate(factor * noise);
+
+    float4 diffused = lerp(center, neighborAverage, factor);
+    scratchWetPigmentTexture[pixel] = ClampPigment(diffused);
+}
+
+[numthreads(8, 8, 1)]
+void CompositeDisplay(uint3 id : SV_DispatchThreadID)
+{
+    if (!IsInsideCanvas(id))
+    {
+        return;
+    }
+
+    int2 pixel = int2(id.xy);
+    float4 wet = ClampPigment(wetPigmentTexture[pixel]);
+    float4 dry = ClampPigment(dryPigmentTexture[pixel]);
+    float4 state = paintStateTexture[pixel];
+
+    float3 baseColor = DrySurfaceColor.rgb;
+    float dryMass = dry.a;
+    float wetMass = wet.a;
+    float3 dryColor = dryMass > Epsilon ? dry.rgb / dryMass : baseColor;
+    float3 wetColor = wetMass > Epsilon ? wet.rgb / wetMass : dryColor;
+
+    float dryCoverage = saturate(dryMass * lerp(1.18, 0.92, saturate(SurfaceAbsorption)));
+    float wetCoverage = saturate(wetMass * lerp(0.82, 1.42, saturate(state.r)) * lerp(0.95, 1.34, saturate(SurfaceWetGloss)));
+    float3 visible = lerp(baseColor, dryColor, dryCoverage);
+    visible = lerp(visible, wetColor, wetCoverage);
+
+    float glossLift = saturate(state.a) * saturate(SurfaceWetGloss) * lerp(0.035, 0.092, saturate(SurfaceBeading));
+    visible = saturate(visible + glossLift);
+
+    displayTexture[pixel] = float4(visible, saturate(max(dryCoverage, wetCoverage)));
+}

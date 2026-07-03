@@ -1,5 +1,6 @@
 using SwingingPaint.BucketFluid.Core;
 using SwingingPaint.Paint;
+using SwingingPaint.Surface;
 using UnityEngine;
 
 namespace SwingingPaint.BucketFluid.Rendering
@@ -19,6 +20,7 @@ namespace SwingingPaint.BucketFluid.Rendering
         public GPUFluidRenderer fluidRenderer;
         public PaintEmitter paintEmitter;
         public GPUFluidOutflowController gpuOutflowController;
+        public CanvasPaintSurface paintSurface;
 
         [Header("Display")]
         public bool showPanel = true;
@@ -126,6 +128,14 @@ namespace SwingingPaint.BucketFluid.Rendering
             GUILayout.Label($"GPU Outflow Emitted/Tick: {(gpuOutflowController != null ? gpuOutflowController.EmittedParticlesThisTick : 0)}");
             GUILayout.Label($"GPU Outflow Impacts/Tick: {(gpuOutflowController != null ? gpuOutflowController.DepositedImpactsThisTick : 0)}");
             GUILayout.Label($"GPU Canvas Writes/Tick: {(gpuOutflowController != null ? gpuOutflowController.CanvasGpuWritesThisTick : 0)}");
+            GUILayout.Label($"Canvas Stateful Ready: {paintSurface != null && paintSurface.StatefulGpuPaintReady}");
+            GUILayout.Label($"Canvas Stateful Enabled: {paintSurface != null && paintSurface.statefulGpuPaint}");
+            GUILayout.Label($"Canvas Quality: {(paintSurface != null ? paintSurface.qualityPreset.ToString() : "n/a")}");
+            GUILayout.Label($"Canvas RT Memory: {(paintSurface != null ? paintSurface.EstimatedGpuPaintMemoryMB : 0f):F2} MB");
+            GUILayout.Label($"Canvas Diffusion Iterations: {(paintSurface != null ? paintSurface.CurrentDiffusionIterations : 0)}");
+            GUILayout.Label($"Canvas Dry/Composite Interval: {(paintSurface != null ? paintSurface.CurrentDryCompositeInterval : 0)}");
+            GUILayout.Label($"Canvas Brush Radius Cap: {(paintSurface != null ? paintSurface.CurrentBrushRadiusPixelCap : 0)} px");
+            GUILayout.Label($"Canvas Surface Profile: {(paintSurface != null && paintSurface.surfaceMaterialProfile != null ? paintSurface.surfaceMaterialProfile.name : "fallback")}");
             GUILayout.Label($"GPU Stream Connectors: {(gpuOutflowController != null ? gpuOutflowController.StreamConnectorCount : 0)}");
             GUILayout.Label($"GPU Outflow Overflow/Tick: {(gpuOutflowController != null ? gpuOutflowController.BufferOverflowThisTick : 0)}");
             GUILayout.Label($"GPU Outflow Avg Density: {(gpuOutflowController != null ? gpuOutflowController.AverageOutflowDensity : 0f):F3}");
@@ -231,6 +241,16 @@ namespace SwingingPaint.BucketFluid.Rendering
             if (gpuOutflowController == null)
             {
                 gpuOutflowController = GetComponentInParent<GPUFluidOutflowController>();
+            }
+
+            if (paintSurface == null && gpuOutflowController != null)
+            {
+                paintSurface = gpuOutflowController.paintSurface;
+            }
+
+            if (paintSurface == null)
+            {
+                paintSurface = FindObjectOfType<CanvasPaintSurface>();
             }
         }
 

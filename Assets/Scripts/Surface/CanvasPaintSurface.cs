@@ -1,5 +1,8 @@
 using SwingingPaint.Core;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace SwingingPaint.Surface
 {
@@ -11,9 +14,33 @@ namespace SwingingPaint.Surface
     /// </summary>
     public class CanvasPaintSurface : MonoBehaviour
     {
+        private const string CanvasPaintComputeShaderPath = "Assets/Shaders/BucketFluid/CanvasPaint.compute";
+        private const int ComputeThreadGroupSize = 8;
+        private const float SafeMaxDepositAmount = 1.15f;
+        private const float SafeMaxImpactRadius = 0.58f;
+        private const float SafeMaxDirectionalStretch = 2.65f;
+
         private static readonly int MainTexId = Shader.PropertyToID("_MainTex");
         private static readonly int BaseMapId = Shader.PropertyToID("_BaseMap");
         private static readonly int ColorId = Shader.PropertyToID("_Color");
+        private static readonly int DisplayTextureId = Shader.PropertyToID("displayTexture");
+        private static readonly int WetPigmentTextureId = Shader.PropertyToID("wetPigmentTexture");
+        private static readonly int DryPigmentTextureId = Shader.PropertyToID("dryPigmentTexture");
+        private static readonly int PaintStateTextureId = Shader.PropertyToID("paintStateTexture");
+        private static readonly int ScratchWetPigmentTextureId = Shader.PropertyToID("scratchWetPigmentTexture");
+        private static readonly int CanvasTextureWidthId = Shader.PropertyToID("CanvasTextureWidth");
+        private static readonly int CanvasTextureHeightId = Shader.PropertyToID("CanvasTextureHeight");
+        private static readonly int DeltaTimeId = Shader.PropertyToID("DeltaTime");
+        private static readonly int ViscosityId = Shader.PropertyToID("Viscosity");
+        private static readonly int DrySurfaceColorId = Shader.PropertyToID("DrySurfaceColor");
+        private static readonly int SurfaceAbsorptionId = Shader.PropertyToID("SurfaceAbsorption");
+        private static readonly int SurfaceSpreadId = Shader.PropertyToID("SurfaceSpread");
+        private static readonly int SurfaceRoughnessId = Shader.PropertyToID("SurfaceRoughness");
+        private static readonly int SurfaceDryingSpeedId = Shader.PropertyToID("SurfaceDryingSpeed");
+        private static readonly int SurfaceMixingRateId = Shader.PropertyToID("SurfaceMixingRate");
+        private static readonly int SurfaceWetGlossId = Shader.PropertyToID("SurfaceWetGloss");
+        private static readonly int SurfaceNoiseScaleId = Shader.PropertyToID("SurfaceNoiseScale");
+        private static readonly int SurfaceBeadingId = Shader.PropertyToID("SurfaceBeading");
 
         [Header("References")]
         public PhysicsSettings physicsSettings;
@@ -55,7 +82,7 @@ namespace SwingingPaint.Surface
         [Range(0f, 3f)]
         public float splatterStrength = 0.65f;
         [Tooltip("How much impact velocity stretches marks along the direction of motion.")]
-        [Range(1f, 4f)]
+        [Range(1f, SafeMaxDirectionalStretch)]
         public float directionalStretch = 1.8f;
         [Tooltip("Paint sliding/dripping strength on tilted or low-absorption surfaces.")]
         [Range(0f, 3f)]
@@ -65,13 +92,64 @@ namespace SwingingPaint.Surface
         public float contactOffsetMultiplier = 1f;
         public bool gpuCanvasMode = true;
 
+        [Header("Stateful GPU Paint")]
+        public bool statefulGpuPaint = true;
+        public CanvasPaintQualityPreset qualityPreset = CanvasPaintQualityPreset.Development;
+        public ComputeShader canvasPaintComputeShader;
+        public SurfaceMaterialProfile surfaceMaterialProfile;
+        [Tooltip("Fallback material mixing when no SurfaceMaterialProfile is assigned.")]
+        [Range(0f, 2f)]
+        public float statefulMixingRate = 0.35f;
+        [Tooltip("Fallback drying speed when no SurfaceMaterialProfile is assigned.")]
+        [Range(0.05f, 4f)]
+        public float statefulDryingSpeed = 0.45f;
+        [Tooltip("Fallback wet highlight and delayed-dry strength when no SurfaceMaterialProfile is assigned.")]
+        [Range(0f, 1f)]
+        public float wetGloss = 0.5f;
+        [Tooltip("Fallback noise scale for wet diffusion when no SurfaceMaterialProfile is assigned.")]
+        [Min(0.01f)]
+        public float stateNoiseScale = 1f;
+
         public RenderTexture PaintTexture { get; private set; }
+        public RenderTexture WetPigmentTexture { get; private set; }
+        public RenderTexture DryPigmentTexture { get; private set; }
+        public RenderTexture PaintStateTexture { get; private set; }
+        public RenderTexture ScratchWetPigmentTexture { get; private set; }
         public int DepositedImpactCount { get; private set; }
         public float TotalPaintDeposited { get; private set; }
         public float CoverageArea { get; private set; }
         public bool SurfaceContactModeEnabled => surfaceContactMode;
         public bool TextureDirty => _textureDirty;
         public bool GpuCanvasModeEnabled => gpuCanvasMode && PaintTexture != null && PaintTexture.enableRandomWrite;
+        public bool StatefulGpuPaintReady =>
+            statefulGpuPaint &&
+            GpuCanvasModeEnabled &&
+            canvasPaintComputeShader != null &&
+            WetPigmentTexture != null &&
+            DryPigmentTexture != null &&
+            PaintStateTexture != null &&
+            ScratchWetPigmentTexture != null &&
+            WetPigmentTexture.IsCreated() &&
+            DryPigmentTexture.IsCreated() &&
+            PaintStateTexture.IsCreated() &&
+            ScratchWetPigmentTexture.IsCreated();
+        public int CanvasSimulationTickCount { get; private set; }
+        public int CurrentDiffusionIterations => GetQualitySettings().diffusionIterations;
+        public int CurrentDryCompositeInterval => GetQualitySettings().dryCompositeInterval;
+        public int CurrentBrushRadiusPixelCap => GetQualitySettings().brushRadiusPixelCap;
+        public float EstimatedGpuPaintMemoryMB => EstimateGpuPaintMemoryMegabytes();
+        public Color EffectiveDrySurfaceColor => surfaceMaterialProfile != null ? surfaceMaterialProfile.baseColor : drySurfaceColor;
+        public float EffectiveAbsorption => surfaceMaterialProfile != null ? surfaceMaterialProfile.absorption : GetAbsorption();
+        public float EffectiveSurfaceSpread => surfaceMaterialProfile != null ? surfaceMaterialProfile.spread : surfaceSpread;
+        public float EffectiveEdgeIrregularity => surfaceMaterialProfile != null ? surfaceMaterialProfile.edgeNoise : edgeIrregularity;
+        public float EffectiveSplatterStrength => surfaceMaterialProfile != null ? surfaceMaterialProfile.splatter : splatterStrength;
+        public float EffectiveSlidingStrength => surfaceMaterialProfile != null ? surfaceMaterialProfile.sliding : slidingStrength;
+        public float EffectiveDryingSpeed => surfaceMaterialProfile != null ? surfaceMaterialProfile.dryingSpeed : statefulDryingSpeed;
+        public float EffectiveMixingRate => surfaceMaterialProfile != null ? surfaceMaterialProfile.mixingRate : statefulMixingRate;
+        public float EffectiveWetGloss => surfaceMaterialProfile != null ? surfaceMaterialProfile.wetGloss : wetGloss;
+        public float EffectiveSurfaceRoughness => surfaceMaterialProfile != null ? surfaceMaterialProfile.roughness : edgeIrregularity;
+        public float EffectiveNoiseScale => surfaceMaterialProfile != null ? surfaceMaterialProfile.noiseScale : stateNoiseScale;
+        public float EffectiveBeading => surfaceMaterialProfile != null ? surfaceMaterialProfile.beading : 0f;
         public Vector2 CanvasWorldSize => GetCanvasSize();
 
         private Texture2D _paintTexture2D;
@@ -81,6 +159,26 @@ namespace SwingingPaint.Surface
         private Mesh _runtimeSurfaceMesh;
         private bool _textureDirty;
         private int _coveredPixelCount;
+        private bool _canvasPaintKernelsResolved;
+        private int _clearCanvasStateKernel;
+        private int _dryAndAbsorbKernel;
+        private int _diffuseWetPigmentKernel;
+        private int _compositeDisplayKernel;
+        private ComputeShader _resolvedCanvasPaintComputeShader;
+
+        private struct QualitySettings
+        {
+            public int diffusionIterations;
+            public int dryCompositeInterval;
+            public int brushRadiusPixelCap;
+
+            public QualitySettings(int diffusionIterations, int dryCompositeInterval, int brushRadiusPixelCap)
+            {
+                this.diffusionIterations = diffusionIterations;
+                this.dryCompositeInterval = dryCompositeInterval;
+                this.brushRadiusPixelCap = brushRadiusPixelCap;
+            }
+        }
 
         private void Awake()
         {
@@ -108,26 +206,36 @@ namespace SwingingPaint.Surface
             ReleaseRuntimeResources();
         }
 
+        public void EnsureGpuPaintResources()
+        {
+            ResolveReferences();
+            EnsureTexture();
+            ApplyTextureToRenderer();
+        }
+
         [ContextMenu("Clear Canvas Paint")]
         public void ClearPaint()
         {
             EnsureTexture();
 
+            Color clearColor = EffectiveDrySurfaceColor;
             for (int i = 0; i < _pixels.Length; i++)
             {
-                _pixels[i] = drySurfaceColor;
+                _pixels[i] = clearColor;
                 _coveredPixels[i] = false;
             }
 
             _paintTexture2D.SetPixels(_pixels);
             _paintTexture2D.Apply(false, false);
             Graphics.Blit(_paintTexture2D, PaintTexture);
+            ClearCanvasStateTextures();
 
             DepositedImpactCount = 0;
             TotalPaintDeposited = 0f;
             _coveredPixelCount = 0;
             CoverageArea = 0f;
             _textureDirty = false;
+            CanvasSimulationTickCount = 0;
         }
 
         public bool TryDepositSegment(
@@ -265,24 +373,28 @@ namespace SwingingPaint.Surface
 
             EnsureTexture();
 
-            float absorption = GetAbsorption();
+            float absorption = EffectiveAbsorption;
             Vector2 canvasSize = GetCanvasSize();
             float viscosityFactor = 1f / (1f + Mathf.Max(0f, viscosity));
             float flowFactor = 1f + Mathf.Max(0f, flowRate) * flowSpreadBoost;
+            float safeAmount = Mathf.Clamp(amount, 0.02f, SafeMaxDepositAmount);
             float absorptionFactor = Mathf.Clamp01(1f - absorption * 0.75f);
-            float spreadWorldRadius = particleRadius * Mathf.Max(0.05f, surfaceSpread) * Mathf.Lerp(1.2f, 3.2f, viscosityFactor) * flowFactor * absorptionFactor;
-            spreadWorldRadius = Mathf.Clamp(spreadWorldRadius, minImpactRadius, maxImpactRadius);
+            float spreadWorldRadius = particleRadius * Mathf.Max(0.05f, EffectiveSurfaceSpread) * Mathf.Lerp(1.2f, 3.2f, viscosityFactor) * flowFactor * absorptionFactor;
+            spreadWorldRadius = Mathf.Clamp(spreadWorldRadius, minImpactRadius, Mathf.Min(maxImpactRadius, SafeMaxImpactRadius));
 
             int centerX = Mathf.RoundToInt(uv.x * (textureWidth - 1));
             int centerY = Mathf.RoundToInt(uv.y * (textureHeight - 1));
             int radiusX = Mathf.Max(1, Mathf.CeilToInt(spreadWorldRadius / Mathf.Max(0.001f, canvasSize.x) * textureWidth));
             int radiusY = Mathf.Max(1, Mathf.CeilToInt(spreadWorldRadius / Mathf.Max(0.001f, canvasSize.y) * textureHeight));
+            int radiusCap = CurrentBrushRadiusPixelCap;
+            radiusX = Mathf.Min(radiusX, radiusCap);
+            radiusY = Mathf.Min(radiusY, radiusCap);
 
             int minX = Mathf.Max(0, centerX - radiusX);
             int maxX = Mathf.Min(textureWidth - 1, centerX + radiusX);
             int minY = Mathf.Max(0, centerY - radiusY);
             int maxY = Mathf.Min(textureHeight - 1, centerY + radiusY);
-            float opacity = Mathf.Clamp01(color.a * wetness * Mathf.Max(0.05f, amount) * opacityMultiplier);
+            float opacity = Mathf.Clamp01(color.a * wetness * safeAmount * opacityMultiplier);
             Color paintColor = color;
             paintColor.a = 1f;
 
@@ -294,7 +406,7 @@ namespace SwingingPaint.Surface
                 {
                     float normalizedX = (x - centerX) / Mathf.Max(1f, radiusX);
                     float distance = Mathf.Sqrt(normalizedX * normalizedX + normalizedY * normalizedY);
-                    float edgeNoise = (Hash01(x * 1973 + y * 9277 + centerX * 313 + centerY * 733) - 0.5f) * edgeIrregularity * 0.42f;
+                    float edgeNoise = (Hash01(x * 1973 + y * 9277 + centerX * 313 + centerY * 733) - 0.5f) * EffectiveEdgeIrregularity * 0.42f;
                     float edgeLimit = 1f + edgeNoise;
                     if (distance > edgeLimit)
                     {
@@ -322,7 +434,7 @@ namespace SwingingPaint.Surface
             }
 
             DepositedImpactCount++;
-            TotalPaintDeposited += Mathf.Max(0f, amount);
+            TotalPaintDeposited += safeAmount;
             _textureDirty = true;
             UpdateCoverageArea();
         }
@@ -353,6 +465,138 @@ namespace SwingingPaint.Surface
             Graphics.Blit(_paintTexture2D, PaintTexture);
             _textureDirty = false;
             return true;
+        }
+
+        public bool StepGpuPaintSimulation(float deltaTime, float viscosity = 0f)
+        {
+            if (deltaTime <= Mathf.Epsilon)
+            {
+                return false;
+            }
+
+            ResolveReferences();
+            EnsureTexture();
+            CanvasSimulationTickCount++;
+
+            if (!StatefulGpuPaintReady || !ResolveCanvasPaintKernels())
+            {
+                return false;
+            }
+
+            QualitySettings settings = GetQualitySettings();
+            int interval = Mathf.Max(1, settings.dryCompositeInterval);
+            if (CanvasSimulationTickCount % interval != 0)
+            {
+                return false;
+            }
+
+            SetCanvasComputeCommonParameters(deltaTime * interval, viscosity);
+            BindCanvasComputeTextures(_dryAndAbsorbKernel);
+            DispatchCanvasKernel(_dryAndAbsorbKernel);
+
+            for (int i = 0; i < settings.diffusionIterations; i++)
+            {
+                BindCanvasComputeTextures(_diffuseWetPigmentKernel);
+                DispatchCanvasKernel(_diffuseWetPigmentKernel);
+                Graphics.CopyTexture(ScratchWetPigmentTexture, WetPigmentTexture);
+            }
+
+            BindCanvasComputeTextures(_compositeDisplayKernel);
+            DispatchCanvasKernel(_compositeDisplayKernel);
+            return true;
+        }
+
+        private void ClearCanvasStateTextures()
+        {
+            if (canvasPaintComputeShader == null ||
+                PaintTexture == null ||
+                WetPigmentTexture == null ||
+                DryPigmentTexture == null ||
+                PaintStateTexture == null ||
+                ScratchWetPigmentTexture == null ||
+                !ResolveCanvasPaintKernels())
+            {
+                return;
+            }
+
+            SetCanvasComputeCommonParameters(0f, 0f);
+            BindCanvasComputeTextures(_clearCanvasStateKernel);
+            DispatchCanvasKernel(_clearCanvasStateKernel);
+        }
+
+        private bool ResolveCanvasPaintKernels()
+        {
+            if (_canvasPaintKernelsResolved && _resolvedCanvasPaintComputeShader == canvasPaintComputeShader)
+            {
+                return true;
+            }
+
+            _canvasPaintKernelsResolved = false;
+            _resolvedCanvasPaintComputeShader = canvasPaintComputeShader;
+
+            if (canvasPaintComputeShader == null)
+            {
+                return false;
+            }
+
+            if (!TryFindCanvasKernel("ClearCanvasState", out _clearCanvasStateKernel) ||
+                !TryFindCanvasKernel("DryAndAbsorb", out _dryAndAbsorbKernel) ||
+                !TryFindCanvasKernel("DiffuseWetPigment", out _diffuseWetPigmentKernel) ||
+                !TryFindCanvasKernel("CompositeDisplay", out _compositeDisplayKernel))
+            {
+                return false;
+            }
+
+            _canvasPaintKernelsResolved = true;
+            return true;
+        }
+
+        private bool TryFindCanvasKernel(string kernelName, out int kernel)
+        {
+            kernel = -1;
+
+            if (!canvasPaintComputeShader.HasKernel(kernelName))
+            {
+                Debug.LogError($"CanvasPaintSurface missing compute kernel: {kernelName}", this);
+                return false;
+            }
+
+            kernel = canvasPaintComputeShader.FindKernel(kernelName);
+            return true;
+        }
+
+        private void SetCanvasComputeCommonParameters(float deltaTime, float viscosity)
+        {
+            canvasPaintComputeShader.SetInt(CanvasTextureWidthId, textureWidth);
+            canvasPaintComputeShader.SetInt(CanvasTextureHeightId, textureHeight);
+            canvasPaintComputeShader.SetFloat(DeltaTimeId, Mathf.Max(0f, deltaTime));
+            canvasPaintComputeShader.SetFloat(ViscosityId, Mathf.Max(0f, viscosity));
+            Color baseColor = EffectiveDrySurfaceColor;
+            canvasPaintComputeShader.SetVector(DrySurfaceColorId, new Vector4(baseColor.r, baseColor.g, baseColor.b, baseColor.a));
+            canvasPaintComputeShader.SetFloat(SurfaceAbsorptionId, Mathf.Clamp01(EffectiveAbsorption));
+            canvasPaintComputeShader.SetFloat(SurfaceSpreadId, Mathf.Max(0f, EffectiveSurfaceSpread));
+            canvasPaintComputeShader.SetFloat(SurfaceRoughnessId, Mathf.Clamp01(EffectiveSurfaceRoughness));
+            canvasPaintComputeShader.SetFloat(SurfaceDryingSpeedId, Mathf.Max(0f, EffectiveDryingSpeed));
+            canvasPaintComputeShader.SetFloat(SurfaceMixingRateId, Mathf.Max(0f, EffectiveMixingRate));
+            canvasPaintComputeShader.SetFloat(SurfaceWetGlossId, Mathf.Clamp01(EffectiveWetGloss));
+            canvasPaintComputeShader.SetFloat(SurfaceNoiseScaleId, Mathf.Max(0.01f, EffectiveNoiseScale));
+            canvasPaintComputeShader.SetFloat(SurfaceBeadingId, Mathf.Clamp01(EffectiveBeading));
+        }
+
+        private void BindCanvasComputeTextures(int kernel)
+        {
+            canvasPaintComputeShader.SetTexture(kernel, DisplayTextureId, PaintTexture);
+            canvasPaintComputeShader.SetTexture(kernel, WetPigmentTextureId, WetPigmentTexture);
+            canvasPaintComputeShader.SetTexture(kernel, DryPigmentTextureId, DryPigmentTexture);
+            canvasPaintComputeShader.SetTexture(kernel, PaintStateTextureId, PaintStateTexture);
+            canvasPaintComputeShader.SetTexture(kernel, ScratchWetPigmentTextureId, ScratchWetPigmentTexture);
+        }
+
+        private void DispatchCanvasKernel(int kernel)
+        {
+            int groupsX = Mathf.Max(1, Mathf.CeilToInt(textureWidth / (float)ComputeThreadGroupSize));
+            int groupsY = Mathf.Max(1, Mathf.CeilToInt(textureHeight / (float)ComputeThreadGroupSize));
+            canvasPaintComputeShader.Dispatch(kernel, groupsX, groupsY, 1);
         }
 
         private bool TryWorldToUV(Vector3 worldPosition, out Vector2 uv)
@@ -410,12 +654,65 @@ namespace SwingingPaint.Surface
 
         private bool IsCovered(Color pixel)
         {
+            Color baseColor = EffectiveDrySurfaceColor;
             float colorDelta =
-                Mathf.Abs(pixel.r - drySurfaceColor.r) +
-                Mathf.Abs(pixel.g - drySurfaceColor.g) +
-                Mathf.Abs(pixel.b - drySurfaceColor.b);
+                Mathf.Abs(pixel.r - baseColor.r) +
+                Mathf.Abs(pixel.g - baseColor.g) +
+                Mathf.Abs(pixel.b - baseColor.b);
 
             return colorDelta > 0.03f;
+        }
+
+        private QualitySettings GetQualitySettings()
+        {
+            switch (qualityPreset)
+            {
+                case CanvasPaintQualityPreset.High:
+                    return new QualitySettings(2, 1, 220);
+                case CanvasPaintQualityPreset.Presentation:
+                    return new QualitySettings(1, 1, 160);
+                default:
+                    return new QualitySettings(0, 2, 96);
+            }
+        }
+
+        private float EstimateGpuPaintMemoryMegabytes()
+        {
+            long bytes = 0;
+            bytes += EstimateRenderTextureBytes(PaintTexture);
+            bytes += EstimateRenderTextureBytes(WetPigmentTexture);
+            bytes += EstimateRenderTextureBytes(DryPigmentTexture);
+            bytes += EstimateRenderTextureBytes(PaintStateTexture);
+            bytes += EstimateRenderTextureBytes(ScratchWetPigmentTexture);
+            return bytes / (1024f * 1024f);
+        }
+
+        private static long EstimateRenderTextureBytes(RenderTexture texture)
+        {
+            if (texture == null)
+            {
+                return 0;
+            }
+
+            return (long)texture.width * texture.height * GetBytesPerPixel(texture.format);
+        }
+
+        private static int GetBytesPerPixel(RenderTextureFormat format)
+        {
+            switch (format)
+            {
+                case RenderTextureFormat.ARGBFloat:
+                    return 16;
+                case RenderTextureFormat.ARGBHalf:
+                    return 8;
+                case RenderTextureFormat.RFloat:
+                    return 4;
+                case RenderTextureFormat.RHalf:
+                    return 2;
+                case RenderTextureFormat.ARGB32:
+                default:
+                    return 4;
+            }
         }
 
         private void ResolveReferences()
@@ -434,6 +731,13 @@ namespace SwingingPaint.Surface
             {
                 physicsSettings = Resources.Load<PhysicsSettings>("PhysicsSettings");
             }
+
+#if UNITY_EDITOR
+            if (canvasPaintComputeShader == null)
+            {
+                canvasPaintComputeShader = AssetDatabase.LoadAssetAtPath<ComputeShader>(CanvasPaintComputeShaderPath);
+            }
+#endif
         }
 
         private void EnsureSimulationMesh()
@@ -484,7 +788,7 @@ namespace SwingingPaint.Surface
         {
             int safeWidth = Mathf.Max(32, textureWidth);
             int safeHeight = Mathf.Max(32, textureHeight);
-            bool needsTexture =
+            bool needsDisplayTexture =
                 _paintTexture2D == null ||
                 _paintTexture2D.width != safeWidth ||
                 _paintTexture2D.height != safeHeight ||
@@ -492,8 +796,25 @@ namespace SwingingPaint.Surface
                 PaintTexture.width != safeWidth ||
                 PaintTexture.height != safeHeight ||
                 !PaintTexture.enableRandomWrite;
+            bool needsStateTextures =
+                WetPigmentTexture == null ||
+                DryPigmentTexture == null ||
+                PaintStateTexture == null ||
+                ScratchWetPigmentTexture == null ||
+                WetPigmentTexture.width != safeWidth ||
+                WetPigmentTexture.height != safeHeight ||
+                DryPigmentTexture.width != safeWidth ||
+                DryPigmentTexture.height != safeHeight ||
+                PaintStateTexture.width != safeWidth ||
+                PaintStateTexture.height != safeHeight ||
+                ScratchWetPigmentTexture.width != safeWidth ||
+                ScratchWetPigmentTexture.height != safeHeight ||
+                !WetPigmentTexture.enableRandomWrite ||
+                !DryPigmentTexture.enableRandomWrite ||
+                !PaintStateTexture.enableRandomWrite ||
+                !ScratchWetPigmentTexture.enableRandomWrite;
 
-            if (!needsTexture)
+            if (!needsDisplayTexture && !needsStateTextures)
             {
                 return;
             }
@@ -518,7 +839,26 @@ namespace SwingingPaint.Surface
             };
             PaintTexture.Create();
 
+            WetPigmentTexture = CreateStateRenderTexture("Runtime Canvas Wet Pigment");
+            DryPigmentTexture = CreateStateRenderTexture("Runtime Canvas Dry Pigment");
+            PaintStateTexture = CreateStateRenderTexture("Runtime Canvas Paint State");
+            ScratchWetPigmentTexture = CreateStateRenderTexture("Runtime Canvas Wet Pigment Scratch");
+
+            ApplyTextureToRenderer();
             ClearPaint();
+        }
+
+        private RenderTexture CreateStateRenderTexture(string textureName)
+        {
+            RenderTexture texture = new RenderTexture(textureWidth, textureHeight, 0, RenderTextureFormat.ARGBHalf)
+            {
+                name = textureName,
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                enableRandomWrite = true
+            };
+            texture.Create();
+            return texture;
         }
 
         private void ApplyTextureToRenderer()
@@ -549,13 +889,13 @@ namespace SwingingPaint.Surface
 
             if (_runtimeMaterial != null)
             {
-                Destroy(_runtimeMaterial);
+                DestroyRuntimeObject(_runtimeMaterial);
                 _runtimeMaterial = null;
             }
 
             if (_runtimeSurfaceMesh != null)
             {
-                Destroy(_runtimeSurfaceMesh);
+                DestroyRuntimeObject(_runtimeSurfaceMesh);
                 _runtimeSurfaceMesh = null;
             }
         }
@@ -564,20 +904,59 @@ namespace SwingingPaint.Surface
         {
             if (_paintTexture2D != null)
             {
-                Destroy(_paintTexture2D);
+                DestroyRuntimeObject(_paintTexture2D);
                 _paintTexture2D = null;
             }
 
             if (PaintTexture != null)
             {
                 PaintTexture.Release();
-                Destroy(PaintTexture);
+                DestroyRuntimeObject(PaintTexture);
                 PaintTexture = null;
             }
+
+            ReleaseRenderTexture(WetPigmentTexture);
+            ReleaseRenderTexture(DryPigmentTexture);
+            ReleaseRenderTexture(PaintStateTexture);
+            ReleaseRenderTexture(ScratchWetPigmentTexture);
+            WetPigmentTexture = null;
+            DryPigmentTexture = null;
+            PaintStateTexture = null;
+            ScratchWetPigmentTexture = null;
 
             _pixels = null;
             _coveredPixels = null;
             _coveredPixelCount = 0;
+            CanvasSimulationTickCount = 0;
+            _canvasPaintKernelsResolved = false;
+        }
+
+        private void ReleaseRenderTexture(RenderTexture texture)
+        {
+            if (texture == null)
+            {
+                return;
+            }
+
+            texture.Release();
+            DestroyRuntimeObject(texture);
+        }
+
+        private static void DestroyRuntimeObject(Object target)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(target);
+            }
+            else
+            {
+                DestroyImmediate(target);
+            }
         }
 
         private void OnValidate()
@@ -588,16 +967,20 @@ namespace SwingingPaint.Surface
             fallbackCanvasSize.x = Mathf.Max(0.001f, fallbackCanvasSize.x);
             fallbackCanvasSize.y = Mathf.Max(0.001f, fallbackCanvasSize.y);
             defaultAbsorption = Mathf.Clamp01(defaultAbsorption);
-            minImpactRadius = Mathf.Max(0.001f, minImpactRadius);
-            maxImpactRadius = Mathf.Max(minImpactRadius, maxImpactRadius);
+            minImpactRadius = Mathf.Clamp(minImpactRadius, 0.001f, SafeMaxImpactRadius);
+            maxImpactRadius = Mathf.Clamp(maxImpactRadius, minImpactRadius, SafeMaxImpactRadius);
             opacityMultiplier = Mathf.Clamp(opacityMultiplier, 0f, 2f);
             flowSpreadBoost = Mathf.Clamp(flowSpreadBoost, 0f, 3f);
             surfaceSpread = Mathf.Clamp(surfaceSpread, 0.05f, 3f);
             edgeIrregularity = Mathf.Clamp01(edgeIrregularity);
             splatterStrength = Mathf.Clamp(splatterStrength, 0f, 3f);
-            directionalStretch = Mathf.Clamp(directionalStretch, 1f, 4f);
+            directionalStretch = Mathf.Clamp(directionalStretch, 1f, SafeMaxDirectionalStretch);
             slidingStrength = Mathf.Clamp(slidingStrength, 0f, 3f);
             contactOffsetMultiplier = Mathf.Clamp(contactOffsetMultiplier, 0f, 2f);
+            statefulMixingRate = Mathf.Clamp(statefulMixingRate, 0f, 2f);
+            statefulDryingSpeed = Mathf.Clamp(statefulDryingSpeed, 0.05f, 4f);
+            wetGloss = Mathf.Clamp01(wetGloss);
+            stateNoiseScale = Mathf.Max(0.01f, stateNoiseScale);
         }
     }
 }
