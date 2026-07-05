@@ -546,6 +546,9 @@ MonoBehaviour:
   useGeneratedSimulationMesh: 1
   surfaceLocalY: 0.5
   fallbackCanvasSize: {x: 5, y: 3}
+  canvasSlopeEnabled: 1
+  canvasSlopeX: 30
+  canvasSlopeZ: 0
   textureWidth: 1024
   textureHeight: 1024
   drySurfaceColor: {r: 0.94, g: 0.92, b: 0.86, a: 1}
@@ -562,6 +565,17 @@ MonoBehaviour:
   surfaceContactMode: 1
   contactOffsetMultiplier: 1
   gpuCanvasMode: 1
+  statefulGpuPaint: 1
+  qualityPreset: 0
+  canvasPaintComputeShader: {fileID: 7200000, guid: c36c277d21ec4663a7d8cabf017b5f00, type: 3}
+  surfaceMaterialProfile: {fileID: 11400000, guid: b2c4d89f6a4d4fa49b834af0b0fd631e, type: 2}
+  statefulMixingRate: 0.35
+  statefulDryingSpeed: 0.45
+  wetGloss: 0.5
+  stateNoiseScale: 1
+  downhillFlowSpeed: 1
+  rivuletStrength: 0
+  wetTrailRetention: 0
 --- !u!1 &44000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -1073,22 +1087,25 @@ MonoBehaviour:
   holePattern: 0
   multiHoleRingRadius: 0.04
   preserveTotalFlow: 1
-  outflowLifetime: 20000
+  outflowLifetime: 6
   maxFallingSpeed: 2.5
   particleAmount: 2
   useBoundaryBottomAsDrainPlane: 1
   drainProbeDepth: 0.008
   drainCaptureRadius: 0.085
   minimumOutflowSpeed: 0.55
-  maxExtractionsPerSubstep: 24
-  minimumContinuousStreamExtractions: 18
+  maxExtractionsPerSubstep: 30
+  minimumContinuousStreamExtractions: 22
   requiredOutwardVelocity: -0.03
   outflowRadiusFromHole: 0.45
   maxOutflowRadiusFromBucketParticle: 0.38
   outflowSpawnSpacing: 0
   streamBreakDistance: 0.24
-  maxAdaptiveStreamBreakDistance: 0.6
+  maxAdaptiveStreamBreakDistance: 0.72
   streamRadiusMultiplier: 2.4
+  streamVisualContinuity: 0.9
+  canvasStrokeDensity: 1.8
+  canvasStrokeOverlap: 1.3
   developmentOutflowCapacity: 50000
   presentationOutflowCapacity: 32768
   hashTableSize: 4096
@@ -1157,6 +1174,7 @@ GameObject:
   - component: {fileID: 48000002}
   - component: {fileID: 48000003}
   - component: {fileID: 48000004}
+  - component: {fileID: 48000005}
   m_Layer: 0
   m_Name: SimulationManager
   m_TagString: Untagged
@@ -1238,17 +1256,30 @@ MonoBehaviour:
   livePaintColorWhileFalling: 1
   streamWidth: 2.4
   streamContinuity: 1
-  streamTrailLength: 1.6
+  streamVisualContinuity: 0.9
+  streamTrailLength: 2.1
+  outflowLifetime: 6
   streamOpacity: 1.1
-  surfaceAbsorption: 0.1
+  surfaceAbsorption: 0.003
   maxImpactRadius: 0.45
   markOpacity: 1
   flowSpreadBoost: 0.4
-  surfaceSpread: 1.6
-  edgeIrregularity: 0.45
-  splatterStrength: 0.65
+  surfaceSpread: 1.55
+  edgeIrregularity: 0.035
+  splatterStrength: 0.85
   directionalStretch: 1.8
-  slidingStrength: 0.35
+  slidingStrength: 2.45
+  canvasStrokeDensity: 1.8
+  canvasStrokeOverlap: 1.3
+  canvasSlopeEnabled: 1
+  canvasSlopeX: 30
+  canvasSlopeZ: 0
+  statefulCanvasPaint: 1
+  canvasQuality: 0
+  surfaceMaterialProfile: {fileID: 11400000, guid: b2c4d89f6a4d4fa49b834af0b0fd631e, type: 2}
+  downhillFlowSpeed: 3.15
+  rivuletStrength: 1.55
+  wetTrailRetention: 0.72
   dischargeCoefficient: 0.62
   viscosityFlowDamping: 0.8
   fallingAirTurbulence: 0.18
@@ -1260,6 +1291,40 @@ MonoBehaviour:
   presentationMode: 0
   developmentParticleCount: 1200
   presentationParticleCount: 12000
+--- !u!114 &48000005
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 48000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a86b8f3e7e774cf597d9bfae2b9ef612, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  showPanel: 1
+  toggleKey: 282
+  panelRect:
+    serializedVersion: 2
+    x: 12
+    y: 12
+    width: 360
+    height: 520
+  maxPanelWidth: 380
+  maxPanelHeight: 560
+  simulationManager: {fileID: 48000003}
+  tuningControls: {fileID: 48000004}
+  physicsSettings: {fileID: 11400000, guid: 6d3641a49fd24e6e8078197debdc1eb4, type: 2}
+  gpuOutflowController: {fileID: 46000006}
+  paintSurface: {fileID: 42000005}
+  surfaceMaterialProfiles:
+  - {fileID: 11400000, guid: 492fea199603487eab813896bb5b3837, type: 2}
+  - {fileID: 11400000, guid: 70f09962fa814c79962f77081d766305, type: 2}
+  - {fileID: 11400000, guid: 8f99569a22a54098ba949eec0d790b1e, type: 2}
+  - {fileID: 11400000, guid: 7f4584f28ccd4e56bb4da99b5d7cbe06, type: 2}
+  - {fileID: 11400000, guid: 9d8f8aa3ae4d46629b5d1e0f606682c0, type: 2}
+  - {fileID: 11400000, guid: b2c4d89f6a4d4fa49b834af0b0fd631e, type: 2}
 --- !u!1 &49000001
 GameObject:
   m_ObjectHideFlags: 0

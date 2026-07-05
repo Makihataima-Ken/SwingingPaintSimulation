@@ -158,6 +158,9 @@ uint CanvasStatefulMode;
 int CanvasBrushRadiusPixelCap;
 float CanvasMaterialRoughness;
 float CanvasMaterialBeading;
+float CanvasStrokeDensity;
+float CanvasStrokeOverlap;
+float StreamVisualContinuity;
 
 static const float Epsilon = 0.00001;
 static const float PressureCorrectionScale = 0.010;
@@ -170,6 +173,7 @@ static const float MaxCanvasImpactRadiusWorld = 0.58;
 static const float MaxCanvasDirectionalStretch = 2.65;
 static const float MaxCanvasDripTravelPixels = 58.0;
 static const float MaxCanvasDripSteps = 12.0;
+static const float MaxCanvasStrokeSamples = 32.0;
 
 float3 ClampVectorLength(float3 value, float maxLength)
 {
@@ -575,37 +579,45 @@ void DepositCanvasStroke(
     float2 safeCanvasSize = max(CanvasWorldSize, float2(0.001, 0.001));
     float3 previousLocal = mul(CanvasWorldToLocal, float4(previousWorldPosition, 1.0)).xyz;
     float3 currentLocal = mul(CanvasWorldToLocal, float4(currentWorldPosition, 1.0)).xyz;
-    float2 movementWorld = float2(currentLocal.x - previousLocal.x, currentLocal.z - previousLocal.z) * safeCanvasSize;
+    float2 previousUv = float2(previousLocal.x + 0.5, previousLocal.z + 0.5);
+    float2 currentPositionUv = float2(currentLocal.x + 0.5, currentLocal.z + 0.5);
+    float2 currentUvDelta = impactUv - currentPositionUv;
+    float2 currentUv = dot(currentUvDelta, currentUvDelta) <= 0.25 ? impactUv : currentPositionUv;
+    float2 movementUv = currentUv - previousUv;
+    float2 movementWorld = movementUv * safeCanvasSize;
 
     float3 localVelocity = mul(CanvasWorldToLocal, float4(impactVelocityWorld, 0.0)).xyz;
     float2 tangentVelocityWorld = localVelocity.xz * safeCanvasSize;
     if (dot(movementWorld, movementWorld) <= Epsilon && dot(tangentVelocityWorld, tangentVelocityWorld) > Epsilon)
     {
         movementWorld = tangentVelocityWorld * DeltaTime;
+        movementUv = movementWorld / safeCanvasSize;
     }
 
     float travelWorld = length(movementWorld);
-    float minimumStrokeLength = max(0.002, CanvasMinImpactRadius * 0.35);
+    float minimumStrokeLength = max(0.001, CanvasMinImpactRadius * 0.2);
     if (travelWorld <= minimumStrokeLength)
     {
         return;
     }
 
-    float maxStrokeLength = max(CanvasMinImpactRadius * 1.5, CanvasMaxImpactRadius * 0.9);
+    float density = max(0.25, CanvasStrokeDensity);
+    float overlap = max(0.5, CanvasStrokeOverlap);
+    float maxStrokeLength = max(CanvasMinImpactRadius * 2.0, CanvasMaxImpactRadius * 1.35);
     float strokeLength = min(travelWorld, maxStrokeLength);
-    float sampleSpacing = max(0.004, max(CanvasMinImpactRadius * 0.45, radius * 0.62));
-    int sampleCount = (int)clamp(ceil(strokeLength / sampleSpacing) + 1.0, 2.0, 9.0);
-    float2 directionWorld = movementWorld / max(travelWorld, Epsilon);
-    float2 directionUv = float2(directionWorld.x / safeCanvasSize.x, directionWorld.y / safeCanvasSize.y);
+    float sampleSpacing = max(0.0015, max(radius * 0.28, CanvasMinImpactRadius * 0.18) / density);
+    int sampleCount = (int)clamp(ceil(strokeLength / sampleSpacing) + 1.0, 2.0, MaxCanvasStrokeSamples);
+    float2 directionUv = movementUv / max(length(movementUv), Epsilon);
+    float2 strokeUvLength = directionUv * float2(strokeLength / safeCanvasSize.x, strokeLength / safeCanvasSize.y);
+    float2 strokeStartUv = currentUv - strokeUvLength;
 
     [loop]
     for (int i = 0; i < sampleCount; i++)
     {
         float sampleT = (float)i / max(1.0, (float)(sampleCount - 1));
-        float centeredT = sampleT - 0.5;
-        float2 sampleUv = impactUv + directionUv * centeredT * strokeLength;
-        float taper = 1.0 - abs(centeredT) * 0.45;
-        DepositCanvasBrushStamp(sampleUv, radius, color, amount, wetness, impactVelocityWorld, 0.55 * taper, 0.95);
+        float2 sampleUv = lerp(strokeStartUv, currentUv, sampleT);
+        float taper = lerp(0.72, 1.0, sampleT);
+        DepositCanvasBrushStamp(sampleUv, radius, color, amount, wetness, impactVelocityWorld, 0.72 * taper, overlap);
     }
 }
 
@@ -1364,11 +1376,15 @@ void BuildStreamConnectors(uint3 id : SV_DispatchThreadID)
         ? normalize(particle.velocityWorld + gravityDirection * max(0.5, speed * 0.25))
         : gravityDirection;
 
+    float continuity = saturate(StreamVisualContinuity);
     float adaptiveBreak = max(
         StreamBreakDistance,
-        speed * DeltaTime * 1.75 + particle.radius * max(3.5, StreamRadiusMultiplier * 2.0));
+        speed * DeltaTime * lerp(1.75, 2.6, continuity) +
+        particle.radius * max(3.5, StreamRadiusMultiplier * lerp(2.0, 3.15, continuity)));
     adaptiveBreak = min(max(adaptiveBreak, particle.radius * 2.2), MaxAdaptiveStreamBreakDistance);
     float adaptiveBreakSq = adaptiveBreak * adaptiveBreak;
+    float projectionThreshold = lerp(0.15, -0.08, continuity);
+    float projectionScoreWeight = lerp(0.45, 0.18, continuity);
 
     uint bestNeighbor = OutflowCapacity;
     float bestScore = 1000000.0;
@@ -1410,7 +1426,7 @@ void BuildStreamConnectors(uint3 id : SV_DispatchThreadID)
 
                     float distance = sqrt(distanceSq);
                     float projected = dot(offset / distance, streamDirection);
-                    if (projected < 0.15)
+                    if (projected < projectionThreshold)
                     {
                         continue;
                     }
@@ -1418,7 +1434,7 @@ void BuildStreamConnectors(uint3 id : SV_DispatchThreadID)
                     float neighborSpeed = length(neighbor.velocityWorld);
                     float densityBonus = saturate((particle.density + neighbor.density) * 0.25);
                     float speedPenalty = abs(neighborSpeed - speed) * 0.02;
-                    float score = distance * (1.0 - projected * 0.45) + speedPenalty - densityBonus * 0.01;
+                    float score = distance * (1.0 - projected * projectionScoreWeight) + speedPenalty - densityBonus * 0.01;
 
                     if (score < bestScore)
                     {

@@ -10,21 +10,21 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 68aea5b2c3dd48fabe30ba8d5ecb9b3e, type: 3}
-  m_Name: Paper
+  m_Name: Glass
   m_EditorClassIdentifier: 
-  baseColor: {r: 0.94, g: 0.92, b: 0.86, a: 1}
-  absorption: 0.62
-  spread: 1.08
-  roughness: 0.62
-  dryingSpeed: 1.35
-  mixingRate: 0.16
-  edgeNoise: 0.32
-  splatter: 0.24
-  sliding: 0.015
-  wetGloss: 0.12
-  noiseScale: 1.05
+  baseColor: {r: 0.9, g: 0.97, b: 1, a: 0.72}
+  absorption: 0.003
+  spread: 1.55
+  roughness: 0.006
+  dryingSpeed: 0.05
+  mixingRate: 1.05
+  edgeNoise: 0.035
+  splatter: 0.85
+  sliding: 2.45
+  wetGloss: 1
+  noiseScale: 0.18
   grainDirection: {x: 1, y: 0}
-  beading: 0.01
-  downhillFlowSpeed: 1
-  rivuletStrength: 0
-  wetTrailRetention: 0
+  beading: 0.98
+  downhillFlowSpeed: 3.15
+  rivuletStrength: 1.55
+  wetTrailRetention: 0.72

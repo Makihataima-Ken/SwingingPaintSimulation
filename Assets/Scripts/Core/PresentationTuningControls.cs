@@ -81,9 +81,17 @@ namespace SwingingPaint.Core
         [Range(0f, 1f)]
         public float streamContinuity = 0.65f;
 
+        [Tooltip("Extra visual connector tolerance used to keep the falling stream continuous, especially near the tail.")]
+        [Range(0f, 1f)]
+        public float streamVisualContinuity = 0.85f;
+
         [Tooltip("Length of the visual trail for each falling paint particle.")]
         [Range(0.5f, 4f)]
         public float streamTrailLength = 1.6f;
+
+        [Tooltip("How long falling GPU outflow particles remain alive, in seconds.")]
+        [Range(0.1f, 60f)]
+        public float outflowLifetime = 6f;
 
         [Tooltip("Opacity multiplier for stream connector ribbons.")]
         [Range(0f, 2f)]
@@ -126,6 +134,26 @@ namespace SwingingPaint.Core
         [Range(0f, 3f)]
         public float slidingStrength = 0.35f;
 
+        [Tooltip("Higher values place more overlapping stroke stamps on the canvas between particle frames.")]
+        [Range(0.25f, 3f)]
+        public float canvasStrokeDensity = 1.6f;
+
+        [Tooltip("Higher values make swept canvas stroke stamps slightly wider/softer.")]
+        [Range(0.5f, 2f)]
+        public float canvasStrokeOverlap = 1.25f;
+
+        [Header("03B - Canvas Slope")]
+        [Tooltip("When enabled, tilts the canvas transform manually without Unity physics.")]
+        public bool canvasSlopeEnabled;
+
+        [Tooltip("Canvas tilt around local X in degrees.")]
+        [Range(-60f, 60f)]
+        public float canvasSlopeX;
+
+        [Tooltip("Canvas tilt around local Z in degrees.")]
+        [Range(-60f, 60f)]
+        public float canvasSlopeZ;
+
         [Header("03C - Stateful Canvas Paint")]
         [Tooltip("When enabled, GPU deposition writes wet pigment/thickness state and the canvas dries/composites over time.")]
         public bool statefulCanvasPaint = true;
@@ -135,6 +163,18 @@ namespace SwingingPaint.Core
 
         [Tooltip("Optional material preset controlling absorption, spread, drying, mixing, splatter, and sliding.")]
         public SurfaceMaterialProfile surfaceMaterialProfile;
+
+        [Tooltip("Multiplier for wet pigment speed along a tilted surface.")]
+        [Range(0.1f, 4f)]
+        public float downhillFlowSpeed = 1f;
+
+        [Tooltip("How strongly wet paint gathers into narrow downhill rivulets.")]
+        [Range(0f, 2f)]
+        public float rivuletStrength;
+
+        [Tooltip("How much thin glossy wet residue remains behind sliding paint.")]
+        [Range(0f, 1f)]
+        public float wetTrailRetention;
 
         [Header("03D - Physical Pour Model")]
         [Tooltip("Torricelli discharge coefficient. Around 0.6 is realistic for a simple hole.")]
@@ -286,6 +326,10 @@ namespace SwingingPaint.Core
             {
                 streamWidth = outflowController.streamRadiusMultiplier;
                 streamContinuity = Mathf.InverseLerp(0.06f, 0.24f, outflowController.streamBreakDistance);
+                streamVisualContinuity = outflowController.streamVisualContinuity;
+                outflowLifetime = outflowController.EffectiveOutflowLifetime;
+                canvasStrokeDensity = outflowController.canvasStrokeDensity;
+                canvasStrokeOverlap = outflowController.canvasStrokeOverlap;
                 infinitePaintSupplyForTuning = outflowController.infinitePaintSupplyForTuning;
                 livePaintColorWhileFalling = outflowController.livePaintColorWhileFalling;
             }
@@ -306,9 +350,13 @@ namespace SwingingPaint.Core
                 splatterStrength = paintSurface.splatterStrength;
                 directionalStretch = paintSurface.directionalStretch;
                 slidingStrength = paintSurface.slidingStrength;
+                canvasSlopeEnabled = paintSurface.canvasSlopeEnabled;
+                canvasSlopeX = paintSurface.canvasSlopeX;
+                canvasSlopeZ = paintSurface.canvasSlopeZ;
                 statefulCanvasPaint = paintSurface.statefulGpuPaint;
                 canvasQuality = paintSurface.qualityPreset;
                 surfaceMaterialProfile = paintSurface.surfaceMaterialProfile;
+                PullSurfaceMaterialControlValues();
             }
 
             if (outflowController != null)
@@ -319,6 +367,39 @@ namespace SwingingPaint.Core
             }
 
             ClampValues();
+        }
+
+        public void PullSurfaceMaterialControlValues()
+        {
+            if (surfaceMaterialProfile != null)
+            {
+                surfaceAbsorption = surfaceMaterialProfile.absorption;
+                surfaceSpread = surfaceMaterialProfile.spread;
+                edgeIrregularity = surfaceMaterialProfile.edgeNoise;
+                splatterStrength = surfaceMaterialProfile.splatter;
+                slidingStrength = surfaceMaterialProfile.sliding;
+                downhillFlowSpeed = surfaceMaterialProfile.downhillFlowSpeed;
+                rivuletStrength = surfaceMaterialProfile.rivuletStrength;
+                wetTrailRetention = surfaceMaterialProfile.wetTrailRetention;
+            }
+            else if (paintSurface != null)
+            {
+                surfaceAbsorption = paintSurface.defaultAbsorption;
+                surfaceSpread = paintSurface.surfaceSpread;
+                edgeIrregularity = paintSurface.edgeIrregularity;
+                splatterStrength = paintSurface.splatterStrength;
+                slidingStrength = paintSurface.slidingStrength;
+                downhillFlowSpeed = paintSurface.downhillFlowSpeed;
+                rivuletStrength = paintSurface.rivuletStrength;
+                wetTrailRetention = paintSurface.wetTrailRetention;
+            }
+
+            ClampValues();
+        }
+
+        public void PullSurfaceMaterialFlowValues()
+        {
+            PullSurfaceMaterialControlValues();
         }
 
         private void ApplyTuning(bool restartSimulation)
@@ -360,11 +441,17 @@ namespace SwingingPaint.Core
                 outflowController.infinitePaintSupplyForTuning = infinitePaintSupplyForTuning;
                 outflowController.livePaintColorWhileFalling = livePaintColorWhileFalling;
                 outflowController.holeDiameter = holeDiameter;
+                outflowController.outflowLifetime = outflowLifetime;
                 outflowController.streamRadiusMultiplier = streamWidth;
-                outflowController.streamBreakDistance = Mathf.Lerp(0.06f, 0.24f, streamContinuity);
-                outflowController.maxAdaptiveStreamBreakDistance = Mathf.Lerp(0.18f, 0.60f, streamContinuity);
-                outflowController.minimumContinuousStreamExtractions = Mathf.RoundToInt(Mathf.Lerp(2f, 18f, streamContinuity));
-                outflowController.maxExtractionsPerSubstep = Mathf.RoundToInt(Mathf.Lerp(4f, 24f, streamContinuity));
+                outflowController.streamVisualContinuity = streamVisualContinuity;
+                outflowController.canvasStrokeDensity = canvasStrokeDensity;
+                outflowController.canvasStrokeOverlap = canvasStrokeOverlap;
+                float combinedContinuity = Mathf.Max(streamContinuity, streamVisualContinuity);
+                outflowController.streamBreakDistance = Mathf.Lerp(0.06f, 0.24f, combinedContinuity);
+                outflowController.maxAdaptiveStreamBreakDistance = Mathf.Lerp(0.22f, 0.72f, combinedContinuity);
+                outflowController.minimumContinuousStreamExtractions = Mathf.RoundToInt(Mathf.Lerp(4f, 24f, combinedContinuity));
+                outflowController.maxExtractionsPerSubstep = Mathf.RoundToInt(Mathf.Lerp(6f, 32f, combinedContinuity));
+                outflowController.outflowSpawnSpacing = Mathf.Lerp(0.002f, 0f, streamVisualContinuity);
                 outflowController.usePhysicalPourModel = true;
                 outflowController.dischargeCoefficient = dischargeCoefficient;
                 outflowController.viscosityFlowDamping = viscosityFlowDamping;
@@ -393,9 +480,25 @@ namespace SwingingPaint.Core
                 paintSurface.splatterStrength = splatterStrength;
                 paintSurface.directionalStretch = directionalStretch;
                 paintSurface.slidingStrength = slidingStrength;
+                paintSurface.SetCanvasSlope(canvasSlopeEnabled, canvasSlopeX, canvasSlopeZ);
                 paintSurface.statefulGpuPaint = statefulCanvasPaint;
                 paintSurface.qualityPreset = canvasQuality;
                 paintSurface.surfaceMaterialProfile = surfaceMaterialProfile;
+                paintSurface.downhillFlowSpeed = downhillFlowSpeed;
+                paintSurface.rivuletStrength = rivuletStrength;
+                paintSurface.wetTrailRetention = wetTrailRetention;
+                if (surfaceMaterialProfile != null)
+                {
+                    surfaceMaterialProfile.absorption = surfaceAbsorption;
+                    surfaceMaterialProfile.spread = surfaceSpread;
+                    surfaceMaterialProfile.edgeNoise = edgeIrregularity;
+                    surfaceMaterialProfile.splatter = splatterStrength;
+                    surfaceMaterialProfile.sliding = slidingStrength;
+                    surfaceMaterialProfile.downhillFlowSpeed = downhillFlowSpeed;
+                    surfaceMaterialProfile.rivuletStrength = rivuletStrength;
+                    surfaceMaterialProfile.wetTrailRetention = wetTrailRetention;
+                    MarkDirty(surfaceMaterialProfile);
+                }
                 paintSurface.EnsureGpuPaintResources();
                 MarkDirty(paintSurface);
             }
@@ -483,7 +586,9 @@ namespace SwingingPaint.Core
             logicalPaintQuantity = Mathf.Max(0f, logicalPaintQuantity);
             streamWidth = Mathf.Clamp(streamWidth, 0.5f, 4f);
             streamContinuity = Mathf.Clamp01(streamContinuity);
+            streamVisualContinuity = Mathf.Clamp01(streamVisualContinuity);
             streamTrailLength = Mathf.Clamp(streamTrailLength, 0.5f, 4f);
+            outflowLifetime = Mathf.Clamp(outflowLifetime, 0.1f, 60f);
             streamOpacity = Mathf.Clamp(streamOpacity, 0f, 2f);
             surfaceAbsorption = Mathf.Clamp01(surfaceAbsorption);
             maxImpactRadius = Mathf.Clamp(maxImpactRadius, 0.001f, SafeMaxImpactRadius);
@@ -494,6 +599,13 @@ namespace SwingingPaint.Core
             splatterStrength = Mathf.Clamp(splatterStrength, 0f, 3f);
             directionalStretch = Mathf.Clamp(directionalStretch, 1f, SafeMaxDirectionalStretch);
             slidingStrength = Mathf.Clamp(slidingStrength, 0f, 3f);
+            canvasStrokeDensity = Mathf.Clamp(canvasStrokeDensity, 0.25f, 3f);
+            canvasStrokeOverlap = Mathf.Clamp(canvasStrokeOverlap, 0.5f, 2f);
+            canvasSlopeX = Mathf.Clamp(canvasSlopeX, -60f, 60f);
+            canvasSlopeZ = Mathf.Clamp(canvasSlopeZ, -60f, 60f);
+            downhillFlowSpeed = Mathf.Clamp(downhillFlowSpeed, 0.1f, 4f);
+            rivuletStrength = Mathf.Clamp(rivuletStrength, 0f, 2f);
+            wetTrailRetention = Mathf.Clamp01(wetTrailRetention);
             canvasQuality = (CanvasPaintQualityPreset)Mathf.Clamp((int)canvasQuality, 0, 2);
             dischargeCoefficient = Mathf.Clamp(dischargeCoefficient, 0.05f, 1f);
             viscosityFlowDamping = Mathf.Clamp(viscosityFlowDamping, 0f, 5f);
@@ -553,7 +665,7 @@ namespace SwingingPaint.Core
         {
             return new TuningSnapshot
             {
-                snapshotVersion = 1,
+                snapshotVersion = 5,
                 autoApply = autoApply,
                 autoResolveReferences = autoResolveReferences,
                 paintColor = paintColor,
@@ -566,7 +678,9 @@ namespace SwingingPaint.Core
                 livePaintColorWhileFalling = livePaintColorWhileFalling,
                 streamWidth = streamWidth,
                 streamContinuity = streamContinuity,
+                streamVisualContinuity = streamVisualContinuity,
                 streamTrailLength = streamTrailLength,
+                outflowLifetime = outflowLifetime,
                 streamOpacity = streamOpacity,
                 surfaceAbsorption = surfaceAbsorption,
                 maxImpactRadius = maxImpactRadius,
@@ -577,9 +691,17 @@ namespace SwingingPaint.Core
                 splatterStrength = splatterStrength,
                 directionalStretch = directionalStretch,
                 slidingStrength = slidingStrength,
+                canvasStrokeDensity = canvasStrokeDensity,
+                canvasStrokeOverlap = canvasStrokeOverlap,
+                canvasSlopeEnabled = canvasSlopeEnabled,
+                canvasSlopeX = canvasSlopeX,
+                canvasSlopeZ = canvasSlopeZ,
                 statefulCanvasPaint = statefulCanvasPaint,
                 canvasQuality = canvasQuality,
                 surfaceMaterialProfileAssetPath = surfaceMaterialProfile != null ? AssetDatabase.GetAssetPath(surfaceMaterialProfile) : string.Empty,
+                downhillFlowSpeed = downhillFlowSpeed,
+                rivuletStrength = rivuletStrength,
+                wetTrailRetention = wetTrailRetention,
                 dischargeCoefficient = dischargeCoefficient,
                 viscosityFlowDamping = viscosityFlowDamping,
                 fallingAirTurbulence = fallingAirTurbulence,
@@ -608,7 +730,9 @@ namespace SwingingPaint.Core
             livePaintColorWhileFalling = snapshot.livePaintColorWhileFalling;
             streamWidth = snapshot.streamWidth;
             streamContinuity = snapshot.streamContinuity;
+            streamVisualContinuity = snapshot.snapshotVersion >= 4 ? snapshot.streamVisualContinuity : streamVisualContinuity;
             streamTrailLength = snapshot.streamTrailLength;
+            outflowLifetime = snapshot.snapshotVersion >= 2 ? snapshot.outflowLifetime : outflowLifetime;
             streamOpacity = snapshot.streamOpacity;
             surfaceAbsorption = snapshot.surfaceAbsorption;
             maxImpactRadius = snapshot.maxImpactRadius;
@@ -619,11 +743,19 @@ namespace SwingingPaint.Core
             splatterStrength = snapshot.splatterStrength;
             directionalStretch = snapshot.directionalStretch;
             slidingStrength = snapshot.slidingStrength;
+            canvasStrokeDensity = snapshot.snapshotVersion >= 4 ? snapshot.canvasStrokeDensity : canvasStrokeDensity;
+            canvasStrokeOverlap = snapshot.snapshotVersion >= 4 ? snapshot.canvasStrokeOverlap : canvasStrokeOverlap;
+            canvasSlopeEnabled = snapshot.snapshotVersion >= 3 && snapshot.canvasSlopeEnabled;
+            canvasSlopeX = snapshot.snapshotVersion >= 3 ? snapshot.canvasSlopeX : 0f;
+            canvasSlopeZ = snapshot.snapshotVersion >= 3 ? snapshot.canvasSlopeZ : 0f;
             statefulCanvasPaint = snapshot.snapshotVersion >= 1 ? snapshot.statefulCanvasPaint : true;
             canvasQuality = snapshot.snapshotVersion >= 1 ? snapshot.canvasQuality : CanvasPaintQualityPreset.Development;
             surfaceMaterialProfile = string.IsNullOrEmpty(snapshot.surfaceMaterialProfileAssetPath)
                 ? null
                 : AssetDatabase.LoadAssetAtPath<SurfaceMaterialProfile>(snapshot.surfaceMaterialProfileAssetPath);
+            downhillFlowSpeed = snapshot.snapshotVersion >= 5 ? snapshot.downhillFlowSpeed : downhillFlowSpeed;
+            rivuletStrength = snapshot.snapshotVersion >= 5 ? snapshot.rivuletStrength : rivuletStrength;
+            wetTrailRetention = snapshot.snapshotVersion >= 5 ? snapshot.wetTrailRetention : wetTrailRetention;
             dischargeCoefficient = snapshot.dischargeCoefficient;
             viscosityFlowDamping = snapshot.viscosityFlowDamping;
             fallingAirTurbulence = snapshot.fallingAirTurbulence;
@@ -654,7 +786,9 @@ namespace SwingingPaint.Core
             public bool livePaintColorWhileFalling;
             public float streamWidth;
             public float streamContinuity;
+            public float streamVisualContinuity;
             public float streamTrailLength;
+            public float outflowLifetime;
             public float streamOpacity;
             public float surfaceAbsorption;
             public float maxImpactRadius;
@@ -665,9 +799,17 @@ namespace SwingingPaint.Core
             public float splatterStrength;
             public float directionalStretch;
             public float slidingStrength;
+            public float canvasStrokeDensity;
+            public float canvasStrokeOverlap;
+            public bool canvasSlopeEnabled;
+            public float canvasSlopeX;
+            public float canvasSlopeZ;
             public bool statefulCanvasPaint;
             public CanvasPaintQualityPreset canvasQuality;
             public string surfaceMaterialProfileAssetPath;
+            public float downhillFlowSpeed;
+            public float rivuletStrength;
+            public float wetTrailRetention;
             public float dischargeCoefficient;
             public float viscosityFlowDamping;
             public float fallingAirTurbulence;

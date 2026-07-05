@@ -41,6 +41,12 @@ namespace SwingingPaint.Surface
         private static readonly int SurfaceWetGlossId = Shader.PropertyToID("SurfaceWetGloss");
         private static readonly int SurfaceNoiseScaleId = Shader.PropertyToID("SurfaceNoiseScale");
         private static readonly int SurfaceBeadingId = Shader.PropertyToID("SurfaceBeading");
+        private static readonly int SurfaceSlidingStrengthId = Shader.PropertyToID("SurfaceSlidingStrength");
+        private static readonly int SurfaceDownhillFlowSpeedId = Shader.PropertyToID("SurfaceDownhillFlowSpeed");
+        private static readonly int SurfaceRivuletStrengthId = Shader.PropertyToID("SurfaceRivuletStrength");
+        private static readonly int SurfaceWetTrailRetentionId = Shader.PropertyToID("SurfaceWetTrailRetention");
+        private static readonly int CanvasDownhillDirectionId = Shader.PropertyToID("CanvasDownhillDirection");
+        private static readonly int CanvasSlopeStrengthId = Shader.PropertyToID("CanvasSlopeStrength");
 
         [Header("References")]
         public PhysicsSettings physicsSettings;
@@ -53,6 +59,13 @@ namespace SwingingPaint.Surface
         [Tooltip("Cube top face is local Y 0.5. Plane meshes usually use 0.")]
         public float surfaceLocalY = 0.5f;
         public Vector2 fallbackCanvasSize = new Vector2(5f, 3f);
+
+        [Header("Manual Slope")]
+        public bool canvasSlopeEnabled;
+        [Range(-60f, 60f)]
+        public float canvasSlopeX;
+        [Range(-60f, 60f)]
+        public float canvasSlopeZ;
 
         [Header("Texture")]
         [Min(32)]
@@ -109,6 +122,15 @@ namespace SwingingPaint.Surface
         [Tooltip("Fallback noise scale for wet diffusion when no SurfaceMaterialProfile is assigned.")]
         [Min(0.01f)]
         public float stateNoiseScale = 1f;
+        [Tooltip("Fallback multiplier for wet pigment speed along a tilted surface.")]
+        [Range(0.1f, 4f)]
+        public float downhillFlowSpeed = 1f;
+        [Tooltip("Fallback strength for gathering wet paint into downhill rivulets.")]
+        [Range(0f, 2f)]
+        public float rivuletStrength;
+        [Tooltip("Fallback thin glossy residue retained behind sliding paint.")]
+        [Range(0f, 1f)]
+        public float wetTrailRetention;
 
         public RenderTexture PaintTexture { get; private set; }
         public RenderTexture WetPigmentTexture { get; private set; }
@@ -150,6 +172,9 @@ namespace SwingingPaint.Surface
         public float EffectiveSurfaceRoughness => surfaceMaterialProfile != null ? surfaceMaterialProfile.roughness : edgeIrregularity;
         public float EffectiveNoiseScale => surfaceMaterialProfile != null ? surfaceMaterialProfile.noiseScale : stateNoiseScale;
         public float EffectiveBeading => surfaceMaterialProfile != null ? surfaceMaterialProfile.beading : 0f;
+        public float EffectiveDownhillFlowSpeed => surfaceMaterialProfile != null ? surfaceMaterialProfile.downhillFlowSpeed : downhillFlowSpeed;
+        public float EffectiveRivuletStrength => surfaceMaterialProfile != null ? surfaceMaterialProfile.rivuletStrength : rivuletStrength;
+        public float EffectiveWetTrailRetention => surfaceMaterialProfile != null ? surfaceMaterialProfile.wetTrailRetention : wetTrailRetention;
         public Vector2 CanvasWorldSize => GetCanvasSize();
 
         private Texture2D _paintTexture2D;
@@ -162,6 +187,7 @@ namespace SwingingPaint.Surface
         private bool _canvasPaintKernelsResolved;
         private int _clearCanvasStateKernel;
         private int _dryAndAbsorbKernel;
+        private int _advectWetPigmentDownSlopeKernel;
         private int _diffuseWetPigmentKernel;
         private int _compositeDisplayKernel;
         private ComputeShader _resolvedCanvasPaintComputeShader;
@@ -183,6 +209,7 @@ namespace SwingingPaint.Surface
         private void Awake()
         {
             ResolveReferences();
+            ApplyCanvasSlope();
             EnsureSimulationMesh();
             EnsureTexture();
             ApplyTextureToRenderer();
@@ -191,6 +218,7 @@ namespace SwingingPaint.Surface
         private void OnEnable()
         {
             ResolveReferences();
+            ApplyCanvasSlope();
             EnsureSimulationMesh();
             EnsureTexture();
             ApplyTextureToRenderer();
@@ -491,6 +519,10 @@ namespace SwingingPaint.Surface
             }
 
             SetCanvasComputeCommonParameters(deltaTime * interval, viscosity);
+            BindCanvasComputeTextures(_advectWetPigmentDownSlopeKernel);
+            DispatchCanvasKernel(_advectWetPigmentDownSlopeKernel);
+            Graphics.CopyTexture(ScratchWetPigmentTexture, WetPigmentTexture);
+
             BindCanvasComputeTextures(_dryAndAbsorbKernel);
             DispatchCanvasKernel(_dryAndAbsorbKernel);
 
@@ -541,6 +573,7 @@ namespace SwingingPaint.Surface
 
             if (!TryFindCanvasKernel("ClearCanvasState", out _clearCanvasStateKernel) ||
                 !TryFindCanvasKernel("DryAndAbsorb", out _dryAndAbsorbKernel) ||
+                !TryFindCanvasKernel("AdvectWetPigmentDownSlope", out _advectWetPigmentDownSlopeKernel) ||
                 !TryFindCanvasKernel("DiffuseWetPigment", out _diffuseWetPigmentKernel) ||
                 !TryFindCanvasKernel("CompositeDisplay", out _compositeDisplayKernel))
             {
@@ -581,6 +614,13 @@ namespace SwingingPaint.Surface
             canvasPaintComputeShader.SetFloat(SurfaceWetGlossId, Mathf.Clamp01(EffectiveWetGloss));
             canvasPaintComputeShader.SetFloat(SurfaceNoiseScaleId, Mathf.Max(0.01f, EffectiveNoiseScale));
             canvasPaintComputeShader.SetFloat(SurfaceBeadingId, Mathf.Clamp01(EffectiveBeading));
+            canvasPaintComputeShader.SetFloat(SurfaceSlidingStrengthId, Mathf.Max(0f, EffectiveSlidingStrength));
+            canvasPaintComputeShader.SetFloat(SurfaceDownhillFlowSpeedId, Mathf.Clamp(EffectiveDownhillFlowSpeed, 0.1f, 4f));
+            canvasPaintComputeShader.SetFloat(SurfaceRivuletStrengthId, Mathf.Clamp(EffectiveRivuletStrength, 0f, 2f));
+            canvasPaintComputeShader.SetFloat(SurfaceWetTrailRetentionId, Mathf.Clamp01(EffectiveWetTrailRetention));
+            GetDownhillUvVector(out Vector2 downhillDirection, out float slopeStrength);
+            canvasPaintComputeShader.SetVector(CanvasDownhillDirectionId, new Vector4(downhillDirection.x, downhillDirection.y, 0f, 0f));
+            canvasPaintComputeShader.SetFloat(CanvasSlopeStrengthId, slopeStrength);
         }
 
         private void BindCanvasComputeTextures(int kernel)
@@ -644,6 +684,56 @@ namespace SwingingPaint.Surface
         private float GetAbsorption()
         {
             return physicsSettings != null ? physicsSettings.SurfaceAbsorption : defaultAbsorption;
+        }
+
+        public void SetCanvasSlope(bool enabled, float slopeX, float slopeZ)
+        {
+            canvasSlopeEnabled = enabled;
+            canvasSlopeX = Mathf.Clamp(slopeX, -60f, 60f);
+            canvasSlopeZ = Mathf.Clamp(slopeZ, -60f, 60f);
+            ApplyCanvasSlope();
+        }
+
+        public void ApplyCanvasSlope()
+        {
+            Vector3 euler = transform.localEulerAngles;
+            euler.x = canvasSlopeEnabled ? canvasSlopeX : 0f;
+            euler.z = canvasSlopeEnabled ? canvasSlopeZ : 0f;
+            transform.localRotation = Quaternion.Euler(euler);
+        }
+
+        private void GetDownhillUvVector(out Vector2 direction, out float slopeStrength)
+        {
+            direction = Vector2.zero;
+            slopeStrength = 0f;
+
+            if (!canvasSlopeEnabled)
+            {
+                return;
+            }
+
+            Vector3 normal = transform.up.sqrMagnitude > Mathf.Epsilon ? transform.up.normalized : Vector3.up;
+            float gravityMagnitude = physicsSettings != null ? physicsSettings.Gravity : 9.81f;
+            Vector3 gravityWorld = Vector3.down * Mathf.Max(0f, gravityMagnitude);
+            Vector3 downhillWorld = gravityWorld - normal * Vector3.Dot(gravityWorld, normal);
+            float downhillMagnitude = downhillWorld.magnitude;
+
+            if (downhillMagnitude <= Mathf.Epsilon)
+            {
+                return;
+            }
+
+            Vector3 downhillLocal = transform.InverseTransformDirection(downhillWorld / downhillMagnitude);
+            direction = new Vector2(downhillLocal.x, downhillLocal.z);
+            float directionMagnitude = direction.magnitude;
+            if (directionMagnitude <= Mathf.Epsilon)
+            {
+                direction = Vector2.zero;
+                return;
+            }
+
+            direction /= directionMagnitude;
+            slopeStrength = Mathf.Clamp01(downhillMagnitude / Mathf.Max(0.001f, gravityWorld.magnitude));
         }
 
         private void UpdateCoverageArea()
@@ -964,6 +1054,8 @@ namespace SwingingPaint.Surface
             textureWidth = Mathf.Max(32, textureWidth);
             textureHeight = Mathf.Max(32, textureHeight);
             surfaceLocalY = Mathf.Clamp(surfaceLocalY, -1f, 1f);
+            canvasSlopeX = Mathf.Clamp(canvasSlopeX, -60f, 60f);
+            canvasSlopeZ = Mathf.Clamp(canvasSlopeZ, -60f, 60f);
             fallbackCanvasSize.x = Mathf.Max(0.001f, fallbackCanvasSize.x);
             fallbackCanvasSize.y = Mathf.Max(0.001f, fallbackCanvasSize.y);
             defaultAbsorption = Mathf.Clamp01(defaultAbsorption);
@@ -981,6 +1073,10 @@ namespace SwingingPaint.Surface
             statefulDryingSpeed = Mathf.Clamp(statefulDryingSpeed, 0.05f, 4f);
             wetGloss = Mathf.Clamp01(wetGloss);
             stateNoiseScale = Mathf.Max(0.01f, stateNoiseScale);
+            downhillFlowSpeed = Mathf.Clamp(downhillFlowSpeed, 0.1f, 4f);
+            rivuletStrength = Mathf.Clamp(rivuletStrength, 0f, 2f);
+            wetTrailRetention = Mathf.Clamp01(wetTrailRetention);
+            ApplyCanvasSlope();
         }
     }
 }

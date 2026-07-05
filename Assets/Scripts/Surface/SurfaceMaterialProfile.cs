@@ -42,6 +42,18 @@ namespace SwingingPaint.Surface
         [Range(0f, 1f)]
         public float beading = 0f;
 
+        [Tooltip("Multiplier for wet pigment speed along a tilted surface.")]
+        [Range(0.1f, 4f)]
+        public float downhillFlowSpeed = 1f;
+
+        [Tooltip("How strongly wet paint gathers into narrow downhill rivulets.")]
+        [Range(0f, 2f)]
+        public float rivuletStrength = 0f;
+
+        [Tooltip("How much thin glossy wet residue remains behind sliding paint.")]
+        [Range(0f, 1f)]
+        public float wetTrailRetention = 0f;
+
         private void OnValidate()
         {
             baseColor.r = Mathf.Clamp01(baseColor.r);
@@ -59,6 +71,9 @@ namespace SwingingPaint.Surface
             wetGloss = Mathf.Clamp01(wetGloss);
             noiseScale = Mathf.Max(0.01f, noiseScale);
             beading = Mathf.Clamp01(beading);
+            downhillFlowSpeed = Mathf.Clamp(downhillFlowSpeed, 0.1f, 4f);
+            rivuletStrength = Mathf.Clamp(rivuletStrength, 0f, 2f);
+            wetTrailRetention = Mathf.Clamp01(wetTrailRetention);
 
             if (grainDirection.sqrMagnitude <= 0.0001f)
             {

@@ -4,6 +4,7 @@
 
 #pragma kernel ClearCanvasState
 #pragma kernel DryAndAbsorb
+#pragma kernel AdvectWetPigmentDownSlope
 #pragma kernel DiffuseWetPigment
 #pragma kernel CompositeDisplay
 
@@ -27,9 +28,16 @@ float SurfaceMixingRate;
 float SurfaceWetGloss;
 float SurfaceNoiseScale;
 float SurfaceBeading;
+float SurfaceSlidingStrength;
+float SurfaceDownhillFlowSpeed;
+float SurfaceRivuletStrength;
+float SurfaceWetTrailRetention;
+float2 CanvasDownhillDirection;
+float CanvasSlopeStrength;
 
 static const float Epsilon = 0.00001;
 static const float MaxPaintThickness = 12.0;
+static const int MaxGlassAdvectionSteps = 4;
 
 bool IsInsideCanvas(uint3 id)
 {
@@ -52,6 +60,43 @@ float4 ClampPigment(float4 pigment)
     pigment.rgb = max(pigment.rgb, float3(0.0, 0.0, 0.0));
     pigment.a = clamp(pigment.a, 0.0, MaxPaintThickness);
     return pigment;
+}
+
+float GetRivuletChannelFactor(int2 pixel, float2 downhill)
+{
+    float rivulet = saturate(SurfaceRivuletStrength * 0.5 + SurfaceBeading * 0.35);
+    if (rivulet <= Epsilon)
+    {
+        return 1.0;
+    }
+
+    float2 perpendicular = float2(-downhill.y, downhill.x);
+    float stripe = dot(float2(pixel), perpendicular) * lerp(0.08, 0.22, rivulet);
+    int stripeCell = (int)floor(stripe);
+    uint hashSeed = (uint)abs(stripeCell) * 73856093u + (uint)pixel.y * 19349663u + (uint)pixel.x * 83492791u;
+    float channelNoise = Hash01(hashSeed);
+    float channel = smoothstep(0.58, 0.96, channelNoise);
+    float localChannel = lerp(0.58, 1.65, channel);
+    return lerp(1.0, localChannel, rivulet);
+}
+
+float GetWetMoveFraction(int2 pixel, float pixelTravel, float2 downhill, int moveStep)
+{
+    float4 wet = ClampPigment(wetPigmentTexture[pixel]);
+    float4 state = paintStateTexture[pixel];
+    float wetness = saturate(state.r);
+    float thickness = saturate(wet.a * 1.35);
+    float channelFactor = GetRivuletChannelFactor(pixel, downhill);
+    float stepFraction = saturate(pixelTravel / max(1.0, (float)moveStep));
+    return saturate(stepFraction * wetness * thickness * channelFactor);
+}
+
+float GetWetTrailKeep(int2 pixel, float moveFraction)
+{
+    float4 wet = ClampPigment(wetPigmentTexture[pixel]);
+    float thinFilm = 1.0 - saturate(wet.a * 0.85);
+    float glassGloss = saturate(SurfaceWetGloss);
+    return saturate(SurfaceWetTrailRetention * lerp(0.05, 0.35, glassGloss) * lerp(0.55, 1.25, thinFilm) * moveFraction);
 }
 
 [numthreads(8, 8, 1)]
@@ -129,6 +174,88 @@ void DryAndAbsorb(uint3 id : SV_DispatchThreadID)
     wetPigmentTexture[pixel] = ClampPigment(wet);
     dryPigmentTexture[pixel] = ClampPigment(dry);
     paintStateTexture[pixel] = state;
+}
+
+[numthreads(8, 8, 1)]
+void AdvectWetPigmentDownSlope(uint3 id : SV_DispatchThreadID)
+{
+    if (!IsInsideCanvas(id))
+    {
+        return;
+    }
+
+    int width = max(CanvasTextureWidth, 1);
+    int height = max(CanvasTextureHeight, 1);
+    int2 pixel = int2(id.xy);
+
+    float2 downhill = CanvasDownhillDirection;
+    float downhillLength = length(downhill);
+    if (downhillLength <= Epsilon || CanvasSlopeStrength <= Epsilon || SurfaceSlidingStrength <= Epsilon)
+    {
+        scratchWetPigmentTexture[pixel] = ClampPigment(wetPigmentTexture[pixel]);
+        return;
+    }
+
+    downhill /= downhillLength;
+    int2 flowStep = int2(
+        downhill.x >= 0.0 ? 1 : -1,
+        downhill.y >= 0.0 ? 1 : -1);
+
+    if (abs(downhill.x) > abs(downhill.y) * 1.45)
+    {
+        flowStep.y = 0;
+    }
+    else if (abs(downhill.y) > abs(downhill.x) * 1.45)
+    {
+        flowStep.x = 0;
+    }
+
+    float4 centerWet = ClampPigment(wetPigmentTexture[pixel]);
+    float viscosityDamping = 1.0 / (1.0 + max(0.0, Viscosity) * 0.65);
+    float absorptionDamping = 1.0 - saturate(SurfaceAbsorption);
+    float roughnessDamping = lerp(1.0, 0.35, saturate(SurfaceRoughness));
+    float beadingFlow = lerp(1.0, 1.38, saturate(SurfaceBeading));
+    float dryingDamping = 1.0 / (1.0 + max(0.0, SurfaceDryingSpeed) * 0.35);
+
+    float pixelTravel = clamp(
+        DeltaTime *
+        max(0.0, SurfaceSlidingStrength) *
+        max(0.1, SurfaceDownhillFlowSpeed) *
+        saturate(CanvasSlopeStrength) *
+        viscosityDamping *
+        absorptionDamping *
+        roughnessDamping *
+        beadingFlow *
+        dryingDamping *
+        lerp(8.0, 42.0, saturate(SurfaceWetGloss)),
+        0.0,
+        (float)MaxGlassAdvectionSteps);
+
+    int moveStep = (int)clamp(ceil(pixelTravel), 1.0, (float)MaxGlassAdvectionSteps);
+    int2 flowOffset = flowStep * moveStep;
+    int2 upstream = clamp(pixel - flowOffset, int2(0, 0), int2(width - 1, height - 1));
+    int2 downstream = clamp(pixel + flowOffset, int2(0, 0), int2(width - 1, height - 1));
+
+    float4 upstreamWet = ClampPigment(wetPigmentTexture[upstream]);
+    float centerMove = GetWetMoveFraction(pixel, pixelTravel, downhill, moveStep);
+    float upstreamMove = GetWetMoveFraction(upstream, pixelTravel, downhill, moveStep);
+
+    if (downstream.x == pixel.x && downstream.y == pixel.y)
+    {
+        centerMove = 0.0;
+    }
+
+    if (upstream.x == pixel.x && upstream.y == pixel.y)
+    {
+        upstreamMove = 0.0;
+    }
+
+    float centerTrailKeep = GetWetTrailKeep(pixel, centerMove);
+    float upstreamTrailKeep = GetWetTrailKeep(upstream, upstreamMove);
+    float4 retainedTrail = centerWet * centerMove * centerTrailKeep;
+    float4 incoming = upstreamWet * upstreamMove * (1.0 - upstreamTrailKeep);
+    float4 result = centerWet * (1.0 - centerMove) + retainedTrail + incoming;
+    scratchWetPigmentTexture[pixel] = ClampPigment(result);
 }
 
 [numthreads(8, 8, 1)]

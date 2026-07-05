@@ -25,3 +25,6 @@ MonoBehaviour:
   noiseScale: 0.8
   grainDirection: {x: 1, y: 0}
   beading: 0.65
+  downhillFlowSpeed: 1
+  rivuletStrength: 0
+  wetTrailRetention: 0
