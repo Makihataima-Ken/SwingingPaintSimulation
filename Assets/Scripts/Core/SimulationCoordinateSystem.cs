@@ -30,15 +30,6 @@ namespace SwingingPaint.Core
         public const float CanvasY = 0f;
 
         /// <summary>
-        /// Projects a world-space point onto the horizontal canvas plane.
-        /// The original X/Z position is preserved and Y is set to canvasY.
-        /// </summary>
-        public static Vector3 ProjectToCanvasPlane(Vector3 worldPosition, float canvasY = CanvasY)
-        {
-            return new Vector3(worldPosition.x, canvasY, worldPosition.z);
-        }
-
-        /// <summary>
         /// Converts a world-space impact point into normalized canvas UV coordinates.
         ///
         /// Assumptions:
@@ -63,15 +54,6 @@ namespace SwingingPaint.Core
             float v = ((worldPosition.z - canvasCenter.z) / canvasSize.y) + 0.5f;
 
             return new Vector2(u, v);
-        }
-
-        /// <summary>
-        /// Returns true when the point is on or above the canvas plane.
-        /// Useful for manual particle collision tests before checking whether a particle crossed CanvasY.
-        /// </summary>
-        public static bool IsOnOrAboveCanvas(Vector3 worldPosition, float canvasY = CanvasY)
-        {
-            return worldPosition.y >= canvasY;
         }
     }
 }

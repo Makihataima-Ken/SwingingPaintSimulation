@@ -9,14 +9,12 @@ namespace SwingingPaint.Surface
     /// <summary>
     /// Live paint target for the ground/canvas.
     ///
-    /// Paint impacts are detected by callers with manual segment/plane checks. Deposition writes
-    /// into a texture and uploads it to a RenderTexture used by the canvas material.
+    /// GPU paint impacts write into state textures that are composited into the canvas material.
     /// </summary>
     public class CanvasPaintSurface : MonoBehaviour
     {
         private const string CanvasPaintComputeShaderPath = "Assets/Shaders/BucketFluid/CanvasPaint.compute";
         private const int ComputeThreadGroupSize = 8;
-        private const float SafeMaxDepositAmount = 1.15f;
         private const float SafeMaxImpactRadius = 0.58f;
         private const float SafeMaxDirectionalStretch = 2.65f;
 
@@ -53,7 +51,6 @@ namespace SwingingPaint.Surface
         public Renderer targetRenderer;
 
         [Header("Surface Geometry")]
-        public bool useTransformPlane = true;
         [Tooltip("Replace the visible mesh with a flat X/Z surface whose UVs exactly match the simulation mapping.")]
         public bool useGeneratedSimulationMesh = true;
         [Tooltip("Cube top face is local Y 0.5. Plane meshes usually use 0.")]
@@ -100,7 +97,6 @@ namespace SwingingPaint.Surface
         [Tooltip("Paint sliding/dripping strength on tilted or low-absorption surfaces.")]
         [Range(0f, 3f)]
         public float slidingStrength = 0.35f;
-        public bool surfaceContactMode = true;
         [Range(0f, 2f)]
         public float contactOffsetMultiplier = 1f;
         public bool gpuCanvasMode = true;
@@ -137,11 +133,6 @@ namespace SwingingPaint.Surface
         public RenderTexture DryPigmentTexture { get; private set; }
         public RenderTexture PaintStateTexture { get; private set; }
         public RenderTexture ScratchWetPigmentTexture { get; private set; }
-        public int DepositedImpactCount { get; private set; }
-        public float TotalPaintDeposited { get; private set; }
-        public float CoverageArea { get; private set; }
-        public bool SurfaceContactModeEnabled => surfaceContactMode;
-        public bool TextureDirty => _textureDirty;
         public bool GpuCanvasModeEnabled => gpuCanvasMode && PaintTexture != null && PaintTexture.enableRandomWrite;
         public bool StatefulGpuPaintReady =>
             statefulGpuPaint &&
@@ -179,11 +170,8 @@ namespace SwingingPaint.Surface
 
         private Texture2D _paintTexture2D;
         private Color[] _pixels;
-        private bool[] _coveredPixels;
         private Material _runtimeMaterial;
         private Mesh _runtimeSurfaceMesh;
-        private bool _textureDirty;
-        private int _coveredPixelCount;
         private bool _canvasPaintKernelsResolved;
         private int _clearCanvasStateKernel;
         private int _dryAndAbsorbKernel;
@@ -224,11 +212,6 @@ namespace SwingingPaint.Surface
             ApplyTextureToRenderer();
         }
 
-        private void LateUpdate()
-        {
-            FlushPaintTexture();
-        }
-
         private void OnDestroy()
         {
             ReleaseRuntimeResources();
@@ -250,7 +233,6 @@ namespace SwingingPaint.Surface
             for (int i = 0; i < _pixels.Length; i++)
             {
                 _pixels[i] = clearColor;
-                _coveredPixels[i] = false;
             }
 
             _paintTexture2D.SetPixels(_pixels);
@@ -258,241 +240,7 @@ namespace SwingingPaint.Surface
             Graphics.Blit(_paintTexture2D, PaintTexture);
             ClearCanvasStateTextures();
 
-            DepositedImpactCount = 0;
-            TotalPaintDeposited = 0f;
-            _coveredPixelCount = 0;
-            CoverageArea = 0f;
-            _textureDirty = false;
             CanvasSimulationTickCount = 0;
-        }
-
-        public bool TryDepositSegment(
-            Vector3 previousWorldPosition,
-            Vector3 currentWorldPosition,
-            float particleRadius,
-            Color color,
-            float wetness,
-            float amount,
-            float viscosity,
-            float flowRate)
-        {
-            return TryDepositSegment(
-                previousWorldPosition,
-                currentWorldPosition,
-                particleRadius,
-                particleRadius,
-                color,
-                wetness,
-                amount,
-                viscosity,
-                flowRate);
-        }
-
-        public bool TryDepositSegment(
-            Vector3 previousWorldPosition,
-            Vector3 currentWorldPosition,
-            float paintRadius,
-            float contactRadius,
-            Color color,
-            float wetness,
-            float amount,
-            float viscosity,
-            float flowRate)
-        {
-            EnsureTexture();
-
-            Plane plane = GetSurfacePlane();
-            float previousDistance = plane.GetDistanceToPoint(previousWorldPosition);
-            float currentDistance = plane.GetDistanceToPoint(currentWorldPosition);
-
-            if (surfaceContactMode)
-            {
-                return TryDepositSweptSphere(
-                    plane,
-                    previousWorldPosition,
-                    currentWorldPosition,
-                    previousDistance,
-                    currentDistance,
-                    paintRadius,
-                    contactRadius,
-                    color,
-                    wetness,
-                    amount,
-                    viscosity,
-                    flowRate);
-            }
-
-            if (previousDistance < 0f || currentDistance > 0f)
-            {
-                return false;
-            }
-
-            float denominator = previousDistance - currentDistance;
-            float t = denominator > Mathf.Epsilon ? previousDistance / denominator : 0f;
-            t = Mathf.Clamp01(t);
-            Vector3 impactPoint = Vector3.Lerp(previousWorldPosition, currentWorldPosition, t);
-
-            if (!TryWorldToUV(impactPoint, out Vector2 uv))
-            {
-                return true;
-            }
-
-            DepositAtUV(uv, paintRadius, color, wetness, amount, viscosity, flowRate);
-            return true;
-        }
-
-        private bool TryDepositSweptSphere(
-            Plane plane,
-            Vector3 previousWorldPosition,
-            Vector3 currentWorldPosition,
-            float previousDistance,
-            float currentDistance,
-            float paintRadius,
-            float contactRadius,
-            Color color,
-            float wetness,
-            float amount,
-            float viscosity,
-            float flowRate)
-        {
-            float contactDistance = Mathf.Max(0f, contactRadius * contactOffsetMultiplier);
-            float previousSurfaceDistance = previousDistance - contactDistance;
-            float currentSurfaceDistance = currentDistance - contactDistance;
-
-            if (previousSurfaceDistance > 0f && currentSurfaceDistance > 0f)
-            {
-                return false;
-            }
-
-            if (previousDistance < -contactDistance && currentDistance < -contactDistance)
-            {
-                return false;
-            }
-
-            float denominator = previousSurfaceDistance - currentSurfaceDistance;
-            float t = denominator > Mathf.Epsilon ? previousSurfaceDistance / denominator : 1f;
-            t = Mathf.Clamp01(t);
-
-            Vector3 centerAtContact = Vector3.Lerp(previousWorldPosition, currentWorldPosition, t);
-            Vector3 impactPoint = centerAtContact - plane.normal * plane.GetDistanceToPoint(centerAtContact);
-
-            if (!TryWorldToUV(impactPoint, out Vector2 uv))
-            {
-                return true;
-            }
-
-            DepositAtUV(uv, paintRadius, color, wetness, amount, viscosity, flowRate);
-            return true;
-        }
-
-        public void DepositAtUV(
-            Vector2 uv,
-            float particleRadius,
-            Color color,
-            float wetness,
-            float amount,
-            float viscosity,
-            float flowRate)
-        {
-            if (uv.x < 0f || uv.x > 1f || uv.y < 0f || uv.y > 1f)
-            {
-                return;
-            }
-
-            EnsureTexture();
-
-            float absorption = EffectiveAbsorption;
-            Vector2 canvasSize = GetCanvasSize();
-            float viscosityFactor = 1f / (1f + Mathf.Max(0f, viscosity));
-            float flowFactor = 1f + Mathf.Max(0f, flowRate) * flowSpreadBoost;
-            float safeAmount = Mathf.Clamp(amount, 0.02f, SafeMaxDepositAmount);
-            float absorptionFactor = Mathf.Clamp01(1f - absorption * 0.75f);
-            float spreadWorldRadius = particleRadius * Mathf.Max(0.05f, EffectiveSurfaceSpread) * Mathf.Lerp(1.2f, 3.2f, viscosityFactor) * flowFactor * absorptionFactor;
-            spreadWorldRadius = Mathf.Clamp(spreadWorldRadius, minImpactRadius, Mathf.Min(maxImpactRadius, SafeMaxImpactRadius));
-
-            int centerX = Mathf.RoundToInt(uv.x * (textureWidth - 1));
-            int centerY = Mathf.RoundToInt(uv.y * (textureHeight - 1));
-            int radiusX = Mathf.Max(1, Mathf.CeilToInt(spreadWorldRadius / Mathf.Max(0.001f, canvasSize.x) * textureWidth));
-            int radiusY = Mathf.Max(1, Mathf.CeilToInt(spreadWorldRadius / Mathf.Max(0.001f, canvasSize.y) * textureHeight));
-            int radiusCap = CurrentBrushRadiusPixelCap;
-            radiusX = Mathf.Min(radiusX, radiusCap);
-            radiusY = Mathf.Min(radiusY, radiusCap);
-
-            int minX = Mathf.Max(0, centerX - radiusX);
-            int maxX = Mathf.Min(textureWidth - 1, centerX + radiusX);
-            int minY = Mathf.Max(0, centerY - radiusY);
-            int maxY = Mathf.Min(textureHeight - 1, centerY + radiusY);
-            float opacity = Mathf.Clamp01(color.a * wetness * safeAmount * opacityMultiplier);
-            Color paintColor = color;
-            paintColor.a = 1f;
-
-            for (int y = minY; y <= maxY; y++)
-            {
-                float normalizedY = (y - centerY) / Mathf.Max(1f, radiusY);
-
-                for (int x = minX; x <= maxX; x++)
-                {
-                    float normalizedX = (x - centerX) / Mathf.Max(1f, radiusX);
-                    float distance = Mathf.Sqrt(normalizedX * normalizedX + normalizedY * normalizedY);
-                    float edgeNoise = (Hash01(x * 1973 + y * 9277 + centerX * 313 + centerY * 733) - 0.5f) * EffectiveEdgeIrregularity * 0.42f;
-                    float edgeLimit = 1f + edgeNoise;
-                    if (distance > edgeLimit)
-                    {
-                        continue;
-                    }
-
-                    float falloff = 1f - distance / Mathf.Max(0.1f, edgeLimit);
-                    falloff *= falloff;
-                    float alpha = Mathf.Clamp01(opacity * falloff * (1f - absorption * 0.4f));
-                    int index = y * textureWidth + x;
-                    Color existing = _pixels[index];
-
-                    existing.r = Mathf.Lerp(existing.r, paintColor.r, alpha);
-                    existing.g = Mathf.Lerp(existing.g, paintColor.g, alpha);
-                    existing.b = Mathf.Lerp(existing.b, paintColor.b, alpha);
-                    existing.a = Mathf.Clamp01(existing.a + alpha * 0.75f);
-                    _pixels[index] = existing;
-
-                    if (!_coveredPixels[index] && IsCovered(existing))
-                    {
-                        _coveredPixels[index] = true;
-                        _coveredPixelCount++;
-                    }
-                }
-            }
-
-            DepositedImpactCount++;
-            TotalPaintDeposited += safeAmount;
-            _textureDirty = true;
-            UpdateCoverageArea();
-        }
-
-        private static float Hash01(int value)
-        {
-            unchecked
-            {
-                uint x = (uint)value;
-                x ^= x >> 16;
-                x *= 2246822519u;
-                x ^= x >> 13;
-                x *= 3266489917u;
-                x ^= x >> 16;
-                return (x & 0x00ffffffu) / 16777215f;
-            }
-        }
-
-        public bool FlushPaintTexture()
-        {
-            if (!_textureDirty)
-            {
-                return false;
-            }
-
-            _paintTexture2D.SetPixels(_pixels);
-            _paintTexture2D.Apply(false, false);
-            Graphics.Blit(_paintTexture2D, PaintTexture);
-            _textureDirty = false;
-            return true;
         }
 
         public bool StepGpuPaintSimulation(float deltaTime, float viscosity = 0f)
@@ -639,33 +387,6 @@ namespace SwingingPaint.Surface
             canvasPaintComputeShader.Dispatch(kernel, groupsX, groupsY, 1);
         }
 
-        private bool TryWorldToUV(Vector3 worldPosition, out Vector2 uv)
-        {
-            if (useTransformPlane)
-            {
-                Vector3 local = transform.InverseTransformPoint(worldPosition);
-                uv = new Vector2(local.x + 0.5f, local.z + 0.5f);
-            }
-            else
-            {
-                uv = SimulationCoordinateSystem.WorldToCanvasUV(worldPosition, transform.position, GetCanvasSize());
-            }
-
-            return uv.x >= 0f && uv.x <= 1f && uv.y >= 0f && uv.y <= 1f;
-        }
-
-        private Plane GetSurfacePlane()
-        {
-            if (useTransformPlane)
-            {
-                Vector3 point = transform.TransformPoint(new Vector3(0f, surfaceLocalY, 0f));
-                Vector3 normal = transform.up;
-                return new Plane(normal.sqrMagnitude > Mathf.Epsilon ? normal.normalized : Vector3.up, point);
-            }
-
-            return new Plane(Vector3.up, new Vector3(0f, SimulationCoordinateSystem.CanvasY, 0f));
-        }
-
         private Vector2 GetCanvasSize()
         {
             Vector3 scale = transform.lossyScale;
@@ -734,23 +455,6 @@ namespace SwingingPaint.Surface
 
             direction /= directionMagnitude;
             slopeStrength = Mathf.Clamp01(downhillMagnitude / Mathf.Max(0.001f, gravityWorld.magnitude));
-        }
-
-        private void UpdateCoverageArea()
-        {
-            Vector2 canvasSize = GetCanvasSize();
-            CoverageArea = _coveredPixelCount / (float)_pixels.Length * canvasSize.x * canvasSize.y;
-        }
-
-        private bool IsCovered(Color pixel)
-        {
-            Color baseColor = EffectiveDrySurfaceColor;
-            float colorDelta =
-                Mathf.Abs(pixel.r - baseColor.r) +
-                Mathf.Abs(pixel.g - baseColor.g) +
-                Mathf.Abs(pixel.b - baseColor.b);
-
-            return colorDelta > 0.03f;
         }
 
         private QualitySettings GetQualitySettings()
@@ -918,7 +622,6 @@ namespace SwingingPaint.Surface
                 name = "Runtime Canvas Paint Backing"
             };
             _pixels = new Color[textureWidth * textureHeight];
-            _coveredPixels = new bool[textureWidth * textureHeight];
 
             PaintTexture = new RenderTexture(textureWidth, textureHeight, 0, RenderTextureFormat.ARGB32)
             {
@@ -1015,8 +718,6 @@ namespace SwingingPaint.Surface
             ScratchWetPigmentTexture = null;
 
             _pixels = null;
-            _coveredPixels = null;
-            _coveredPixelCount = 0;
             CanvasSimulationTickCount = 0;
             _canvasPaintKernelsResolved = false;
         }

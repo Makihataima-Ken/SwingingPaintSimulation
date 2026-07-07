@@ -79,7 +79,14 @@ namespace SwingingPaint.BucketFluid.Rendering
             }
 
             outflowController.SetRenderMeshArgs(particleMesh);
+            UpdateRenderProperties();
+            DrawOutflow();
 
+            RenderedInstanceCapacity = outflowController.OutflowCapacity;
+        }
+
+        private void UpdateRenderProperties()
+        {
             if (_propertyBlock == null)
             {
                 _propertyBlock = new MaterialPropertyBlock();
@@ -100,26 +107,24 @@ namespace SwingingPaint.BucketFluid.Rendering
             _propertyBlock.SetVector(CameraRightId, cameraRight);
             _propertyBlock.SetVector(CameraUpId, cameraUp);
             _propertyBlock.SetVector(CameraForwardId, cameraForward);
+        }
 
+        private void DrawOutflow()
+        {
             if (renderConnectors && connectorMaterial != null)
             {
-                Graphics.DrawMeshInstancedIndirect(
-                    particleMesh,
-                    0,
-                    connectorMaterial,
-                    renderBounds,
-                    outflowController.IndirectArgsBuffer,
-                    0,
-                    _propertyBlock,
-                    ShadowCastingMode.Off,
-                    false,
-                    gameObject.layer);
+                DrawIndirect(connectorMaterial);
             }
 
+            DrawIndirect(particleMaterial);
+        }
+
+        private void DrawIndirect(Material material)
+        {
             Graphics.DrawMeshInstancedIndirect(
                 particleMesh,
                 0,
-                particleMaterial,
+                material,
                 renderBounds,
                 outflowController.IndirectArgsBuffer,
                 0,
@@ -127,8 +132,6 @@ namespace SwingingPaint.BucketFluid.Rendering
                 ShadowCastingMode.Off,
                 false,
                 gameObject.layer);
-
-            RenderedInstanceCapacity = outflowController.OutflowCapacity;
         }
 
         private void OnDisable()
@@ -335,7 +338,6 @@ namespace SwingingPaint.BucketFluid.Rendering
             size.y = Mathf.Max(0.01f, size.y);
             size.z = Mathf.Max(0.01f, size.z);
             renderBounds.size = size;
-            fallbackParticleSize = Mathf.Max(0.001f, fallbackParticleSize);
             particleDiameterMultiplier = Mathf.Max(0.1f, particleDiameterMultiplier);
             minimumVisualParticleDiameterMultiplier = Mathf.Max(0.1f, minimumVisualParticleDiameterMultiplier);
             minimumVisualStreamRadiusMultiplier = Mathf.Max(0.1f, minimumVisualStreamRadiusMultiplier);

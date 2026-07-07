@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using SwingingPaint.BucketFluid.Rendering;
 using SwingingPaint.Core;
-using SwingingPaint.Paint;
 using SwingingPaint.Surface;
 using UnityEngine;
 using UnityEngine.Rendering;

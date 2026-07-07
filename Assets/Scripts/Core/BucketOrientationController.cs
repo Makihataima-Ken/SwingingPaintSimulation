@@ -15,7 +15,6 @@ public class BucketOrientationController : MonoBehaviour
     public Transform pivotPoint;
     public Transform bucketRig;
     public Transform ropeAttachment;
-    public Transform bucketVisualRoot;
     public Transform paintHole;
 
     [Header("Local Axes")]
@@ -201,11 +200,6 @@ public class BucketOrientationController : MonoBehaviour
         if (ropeAttachment == null && bucketRig != null)
         {
             ropeAttachment = bucketRig.Find("RopeAttachment");
-        }
-
-        if (bucketVisualRoot == null && bucketRig != null)
-        {
-            bucketVisualRoot = bucketRig.Find("Bucket");
         }
 
         if (paintHole == null && bucketRig != null)

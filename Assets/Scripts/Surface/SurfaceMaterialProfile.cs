@@ -37,8 +37,6 @@ namespace SwingingPaint.Surface
         [Min(0.01f)]
         public float noiseScale = 1f;
 
-        public Vector2 grainDirection = Vector2.right;
-
         [Range(0f, 1f)]
         public float beading = 0f;
 
@@ -74,15 +72,6 @@ namespace SwingingPaint.Surface
             downhillFlowSpeed = Mathf.Clamp(downhillFlowSpeed, 0.1f, 4f);
             rivuletStrength = Mathf.Clamp(rivuletStrength, 0f, 2f);
             wetTrailRetention = Mathf.Clamp01(wetTrailRetention);
-
-            if (grainDirection.sqrMagnitude <= 0.0001f)
-            {
-                grainDirection = Vector2.right;
-            }
-            else
-            {
-                grainDirection.Normalize();
-            }
         }
     }
 }

@@ -7,7 +7,7 @@ namespace SwingingPaint.BucketFluid.Core
     /// Mathematical bucket boundary in BucketRig local space.
     ///
     /// The boundary is a truncated cone/frustum aligned to BucketRig local Y. It is used by
-    /// setup, particle initialization, and future fluid constraints without built-in physics.
+    /// setup, particle initialization, and fluid constraints without built-in physics.
     /// </summary>
     public class BucketFluidBoundary : MonoBehaviour
     {

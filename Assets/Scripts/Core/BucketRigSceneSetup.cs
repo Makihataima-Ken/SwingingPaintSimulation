@@ -3,7 +3,6 @@ using UnityEngine.Rendering;
 using SwingingPaint.BucketFluid;
 using SwingingPaint.BucketFluid.Core;
 using SwingingPaint.BucketFluid.Rendering;
-using SwingingPaint.Paint;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -22,7 +21,7 @@ using UnityEditor;
 /// - RopePlaceholder
 ///
 /// BucketRig is the physics/motion point moved by Pendulum. BucketModel is visual only,
-/// RopeAttachment is the visual rope endpoint, and PaintHole marks the future emission point near the bottom of the bucket.
+/// RopeAttachment is the visual rope endpoint, and PaintHole marks the active paint emission point near the bottom of the bucket.
 /// This helper does not use Rigidbody, Colliders, or Unity physics.
 /// </summary>
 [ExecuteAlways]
@@ -106,7 +105,6 @@ public class BucketRigSceneSetup : MonoBehaviour
                 bucketRig,
                 pivotPoint,
                 ropeAttachment,
-                bucketVisual,
                 paintHole,
                 createMissingMarkers
             );
@@ -359,7 +357,6 @@ public class BucketRigSceneSetup : MonoBehaviour
         Transform bucketRig,
         Transform pivotPoint,
         Transform ropeAttachment,
-        Transform bucketVisual,
         Transform paintHole,
         bool createMissing
     )
@@ -380,20 +377,9 @@ public class BucketRigSceneSetup : MonoBehaviour
             orientationController = bucketRig.gameObject.AddComponent<BucketOrientationController>();
         }
 
-        if (bucketVisual == null)
-        {
-            bucketVisual = bucketRig.Find("Bucket");
-        }
-
-        if (bucketVisual == null)
-        {
-            bucketVisual = bucketRig.Find("ProceduralBucketFallback");
-        }
-
         orientationController.pivotPoint = pivotPoint;
         orientationController.bucketRig = bucketRig;
         orientationController.ropeAttachment = ropeAttachment;
-        orientationController.bucketVisualRoot = bucketVisual;
         orientationController.paintHole = paintHole;
 
         if (orientationController.bucketLocalUpAxis.sqrMagnitude <= 0.000001f)
@@ -419,7 +405,7 @@ public class BucketRigSceneSetup : MonoBehaviour
     {
         if (paintHole != null)
         {
-            ConfigurePaintEmitter(boundary, paintHole, createMissing);
+            ConfigurePaintOutputComponents(boundary, paintHole, createMissing);
 
             PaintHoleGizmo paintHoleGizmo = paintHole.GetComponent<PaintHoleGizmo>();
             if (paintHoleGizmo == null)
@@ -455,55 +441,64 @@ public class BucketRigSceneSetup : MonoBehaviour
         }
     }
 
-    private static void ConfigurePaintEmitter(
+    private static void ConfigurePaintOutputComponents(
         BucketFluidBoundary boundary,
         Transform paintHole,
         bool createMissing
     )
     {
-        PaintEmitter paintEmitter = paintHole.GetComponent<PaintEmitter>();
-        if (paintEmitter == null)
-        {
-            if (!createMissing)
-            {
-                return;
-            }
-
-            paintEmitter = paintHole.gameObject.AddComponent<PaintEmitter>();
-        }
-
         Transform bucketRig = boundary != null ? boundary.transform : paintHole.parent;
-        paintEmitter.paintHoleTransform = paintHole;
-        paintEmitter.bucketTransform = bucketRig;
-        paintEmitter.boundary = boundary;
-        paintEmitter.fluidSettings = bucketRig != null ? bucketRig.GetComponent<BucketFluidSettings>() : null;
-        paintEmitter.motionProvider = bucketRig != null ? bucketRig.GetComponent<BucketMotionProvider>() : null;
+        GPUFluidOutflowController outflowController =
+            ConfigureGpuOutflowController(boundary, paintHole, bucketRig, createMissing);
 
-        GPUFluidOutflowController outflowController = paintHole.GetComponent<GPUFluidOutflowController>();
-        if (outflowController == null && createMissing)
+        ConfigureGpuOutflowRenderer(paintHole, outflowController, createMissing);
+    }
+
+    private static GPUFluidOutflowController ConfigureGpuOutflowController(
+        BucketFluidBoundary boundary,
+        Transform paintHole,
+        Transform bucketRig,
+        bool createMissing
+    )
+    {
+        GPUFluidOutflowController outflowController =
+            GetOrCreateComponent<GPUFluidOutflowController>(paintHole, createMissing);
+
+        if (outflowController == null)
         {
-            outflowController = paintHole.gameObject.AddComponent<GPUFluidOutflowController>();
+            return null;
         }
 
-        if (outflowController != null)
-        {
-            outflowController.paintHoleTransform = paintHole;
-            outflowController.simulator = bucketRig != null ? bucketRig.GetComponent<GPUFluidSimulator>() : null;
-            outflowController.settings = bucketRig != null ? bucketRig.GetComponent<BucketFluidSettings>() : null;
-            outflowController.motionProvider = bucketRig != null ? bucketRig.GetComponent<BucketMotionProvider>() : null;
-            outflowController.boundary = boundary;
-        }
+        outflowController.paintHoleTransform = paintHole;
+        outflowController.simulator = bucketRig != null ? bucketRig.GetComponent<GPUFluidSimulator>() : null;
+        outflowController.settings = bucketRig != null ? bucketRig.GetComponent<BucketFluidSettings>() : null;
+        outflowController.motionProvider = bucketRig != null ? bucketRig.GetComponent<BucketMotionProvider>() : null;
+        outflowController.boundary = boundary;
+        return outflowController;
+    }
 
-        GPUOutflowRenderer outflowRenderer = paintHole.GetComponent<GPUOutflowRenderer>();
-        if (outflowRenderer == null && createMissing)
-        {
-            outflowRenderer = paintHole.gameObject.AddComponent<GPUOutflowRenderer>();
-        }
-
+    private static void ConfigureGpuOutflowRenderer(
+        Transform paintHole,
+        GPUFluidOutflowController outflowController,
+        bool createMissing
+    )
+    {
+        GPUOutflowRenderer outflowRenderer = GetOrCreateComponent<GPUOutflowRenderer>(paintHole, createMissing);
         if (outflowRenderer != null)
         {
             outflowRenderer.outflowController = outflowController;
         }
+    }
+
+    private static T GetOrCreateComponent<T>(Transform owner, bool createMissing) where T : Component
+    {
+        T component = owner.GetComponent<T>();
+        if (component == null && createMissing)
+        {
+            component = owner.gameObject.AddComponent<T>();
+        }
+
+        return component;
     }
 
     private void OnValidate()

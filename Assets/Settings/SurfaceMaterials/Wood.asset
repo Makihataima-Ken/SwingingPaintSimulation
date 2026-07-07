@@ -23,7 +23,6 @@ MonoBehaviour:
   sliding: 0.12
   wetGloss: 0.32
   noiseScale: 1.35
-  grainDirection: {x: 1, y: 0}
   beading: 0.08
   downhillFlowSpeed: 1
   rivuletStrength: 0
