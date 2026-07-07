@@ -30,6 +30,7 @@ namespace SwingingPaint.UI
         public BucketFluidVolumeRenderer fluidVolumeRenderer;
         public FluidDebugPanel fluidDebugPanel;
         public CanvasPaintSurface paintSurface;
+        public DesktopSpectatorCamera spectatorCamera;
         public SurfaceMaterialProfile[] surfaceMaterialProfiles;
 
         private Vector2 _scroll;
@@ -74,6 +75,7 @@ namespace SwingingPaint.UI
             DrawTopControls();
             DrawStatus();
             DrawFluidViewControls();
+            DrawCameraControls();
 
             if (tuningControls == null)
             {
@@ -194,6 +196,107 @@ namespace SwingingPaint.UI
 
             GUI.enabled = true;
             GUILayout.EndHorizontal();
+        }
+
+        private void DrawCameraControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Camera / Controls");
+
+            if (spectatorCamera == null)
+            {
+                GUILayout.Label("Spectator Camera: n/a");
+                return;
+            }
+
+            float moveSpeed = spectatorCamera.moveSpeed;
+            if (DrawSlider("Camera Speed", ref moveSpeed, 0.1f, 12f, false))
+            {
+                spectatorCamera.moveSpeed = moveSpeed;
+            }
+
+            float sensitivity = spectatorCamera.mouseSensitivity;
+            if (DrawSlider("Mouse Sens.", ref sensitivity, 0.1f, 8f, false))
+            {
+                spectatorCamera.mouseSensitivity = sensitivity;
+            }
+
+            bool followBucket = spectatorCamera.followBucket;
+            bool newFollowBucket = GUILayout.Toggle(followBucket, "Follow Bucket");
+            if (newFollowBucket != followBucket)
+            {
+                spectatorCamera.SetFollowBucket(newFollowBucket);
+            }
+
+            bool lookAtBucket = spectatorCamera.lookAtBucket;
+            bool newLookAtBucket = GUILayout.Toggle(lookAtBucket, "Look At Bucket");
+            if (newLookAtBucket != lookAtBucket)
+            {
+                spectatorCamera.SetLookAtBucket(newLookAtBucket);
+            }
+
+            bool lookAtCanvas = spectatorCamera.lookAtCanvas;
+            bool newLookAtCanvas = GUILayout.Toggle(lookAtCanvas, "Look At Canvas");
+            if (newLookAtCanvas != lookAtCanvas)
+            {
+                spectatorCamera.SetLookAtCanvas(newLookAtCanvas);
+            }
+
+            float followSpeed = spectatorCamera.smoothFollowSpeed;
+            if (DrawSlider("Follow Smooth", ref followSpeed, 0.5f, 20f, false))
+            {
+                spectatorCamera.smoothFollowSpeed = followSpeed;
+            }
+
+            float lookSpeed = spectatorCamera.smoothLookSpeed;
+            if (DrawSlider("Look Smooth", ref lookSpeed, 0.5f, 20f, false))
+            {
+                spectatorCamera.smoothLookSpeed = lookSpeed;
+            }
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Reset Cam"))
+            {
+                spectatorCamera.ResetCameraPose();
+            }
+
+            if (GUILayout.Button("Focus Bucket"))
+            {
+                spectatorCamera.FocusBucket();
+            }
+
+            if (GUILayout.Button("Focus Canvas"))
+            {
+                spectatorCamera.FocusCanvas();
+            }
+
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawCameraPresetButton("Overview", DesktopSpectatorCamera.CameraPreset.Overview);
+            DrawCameraPresetButton("Bucket", DesktopSpectatorCamera.CameraPreset.BucketCloseUp);
+            DrawCameraPresetButton("Canvas", DesktopSpectatorCamera.CameraPreset.CanvasCloseUp);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawCameraPresetButton("Side", DesktopSpectatorCamera.CameraPreset.SideView);
+            DrawCameraPresetButton("Top Debug", DesktopSpectatorCamera.CameraPreset.TopDebug);
+            string helpLabel = spectatorCamera.showControlsHelp ? "Hide Help" : "Show Help";
+            if (GUILayout.Button(helpLabel))
+            {
+                spectatorCamera.showControlsHelp = !spectatorCamera.showControlsHelp;
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("RMB camera look, LMB near bucket grab/throw.");
+        }
+
+        private void DrawCameraPresetButton(string label, DesktopSpectatorCamera.CameraPreset preset)
+        {
+            if (GUILayout.Button(label))
+            {
+                spectatorCamera.ApplyPreset(preset);
+            }
         }
 
         private void DrawPaintControls()
@@ -490,6 +593,11 @@ namespace SwingingPaint.UI
                 {
                     paintSurface = FindObjectOfType<CanvasPaintSurface>();
                 }
+            }
+
+            if (spectatorCamera == null)
+            {
+                spectatorCamera = FindObjectOfType<DesktopSpectatorCamera>();
             }
         }
 

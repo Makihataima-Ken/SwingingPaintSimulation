@@ -13,11 +13,11 @@ MonoBehaviour:
   m_Name: PhysicsSettings
   m_EditorClassIdentifier: 
   gravity: 9.81
-  damping: 0.05
+  damping: 0.67391306
   initialAngle: 30
   angularVelocity: 0
-  initialLateralAngularVelocity: 25
-  direction: 0
+  initialLateralAngularVelocity: 720
+  direction: 180
   bucketMass: 1.2
   paintMass: 1
   airResistance: 0.02

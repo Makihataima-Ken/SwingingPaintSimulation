@@ -502,6 +502,16 @@ public class Pendulum : MonoBehaviour
             return;
         }
 
+        if (DesktopSpectatorCamera.IsAnyMouseLookActive)
+        {
+            return;
+        }
+
+        if (ignoreMouseWhenPointerOverUI && GUIUtility.hotControl != 0)
+        {
+            return;
+        }
+
         if (ignoreMouseWhenPointerOverUI && EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
         {
             return;
