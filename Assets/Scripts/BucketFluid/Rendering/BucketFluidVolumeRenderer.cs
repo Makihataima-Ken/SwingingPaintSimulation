@@ -235,10 +235,12 @@ namespace SwingingPaint.BucketFluid.Rendering
 
         private void ApplyPresentationDefaults()
         {
-            if (disableParticleCloudInPresentation && particleRenderer != null && particleRenderer.renderEnabled)
+            if (!renderEnabled || !disableParticleCloudInPresentation || particleRenderer == null || !particleRenderer.renderEnabled)
             {
-                particleRenderer.renderEnabled = false;
+                return;
             }
+
+            particleRenderer.renderEnabled = false;
         }
 
         private void UpdateFill(float deltaTime)

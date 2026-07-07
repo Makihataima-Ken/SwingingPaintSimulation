@@ -1,4 +1,5 @@
 using SwingingPaint.BucketFluid.Core;
+using SwingingPaint.BucketFluid.Rendering;
 using SwingingPaint.Core;
 using SwingingPaint.Surface;
 using UnityEngine;
@@ -25,6 +26,9 @@ namespace SwingingPaint.UI
         public PresentationTuningControls tuningControls;
         public PhysicsSettings physicsSettings;
         public GPUFluidOutflowController gpuOutflowController;
+        public GPUFluidRenderer fluidRenderer;
+        public BucketFluidVolumeRenderer fluidVolumeRenderer;
+        public FluidDebugPanel fluidDebugPanel;
         public CanvasPaintSurface paintSurface;
         public SurfaceMaterialProfile[] surfaceMaterialProfiles;
 
@@ -69,6 +73,7 @@ namespace SwingingPaint.UI
 
             DrawTopControls();
             DrawStatus();
+            DrawFluidViewControls();
 
             if (tuningControls == null)
             {
@@ -162,6 +167,33 @@ namespace SwingingPaint.UI
             GUILayout.Label($"Emitted/Tick: {(gpuOutflowController != null ? gpuOutflowController.EmittedParticlesThisTick.ToString() : "n/a")}");
             GUILayout.Label($"Canvas Writes/Tick: {(gpuOutflowController != null ? gpuOutflowController.CanvasGpuWritesThisTick.ToString() : "n/a")}");
             GUILayout.Label($"Physical Flow: {(gpuOutflowController != null ? gpuOutflowController.CurrentPhysicalFlowRateCubicMetersPerSecond.ToString("F6") : "n/a")}");
+        }
+
+        private void DrawFluidViewControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Fluid View");
+
+            bool particlesSelected = fluidRenderer != null && fluidRenderer.renderEnabled;
+            bool volumeSelected = fluidVolumeRenderer != null && fluidVolumeRenderer.renderEnabled && !particlesSelected;
+            GUILayout.Label($"Mode: {(particlesSelected ? "Particles" : volumeSelected ? "Static Fluid" : "n/a")}");
+
+            GUILayout.BeginHorizontal();
+
+            GUI.enabled = !volumeSelected && fluidVolumeRenderer != null;
+            if (GUILayout.Button("Static Fluid"))
+            {
+                ApplyFluidView(useParticles: false);
+            }
+
+            GUI.enabled = !particlesSelected && fluidRenderer != null;
+            if (GUILayout.Button("Particles"))
+            {
+                ApplyFluidView(useParticles: true);
+            }
+
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
         }
 
         private void DrawPaintControls()
@@ -355,6 +387,33 @@ namespace SwingingPaint.UI
             tuningControls?.ApplyTuning();
         }
 
+        private void ApplyFluidView(bool useParticles)
+        {
+            HideFluidDebugPanel();
+
+            if (fluidRenderer != null)
+            {
+                fluidRenderer.renderEnabled = useParticles;
+            }
+
+            if (fluidVolumeRenderer != null)
+            {
+                fluidVolumeRenderer.disableParticleCloudInPresentation = false;
+                fluidVolumeRenderer.renderEnabled = !useParticles;
+            }
+        }
+
+        private void HideFluidDebugPanel()
+        {
+            if (fluidDebugPanel == null)
+            {
+                return;
+            }
+
+            fluidDebugPanel.showPanel = false;
+            fluidDebugPanel.forceParticleDebugView = false;
+        }
+
         private void ResolveReferences()
         {
             if (simulationManager == null)
@@ -398,6 +457,21 @@ namespace SwingingPaint.UI
                 {
                     gpuOutflowController = FindObjectOfType<GPUFluidOutflowController>();
                 }
+            }
+
+            if (fluidRenderer == null)
+            {
+                fluidRenderer = FindObjectOfType<GPUFluidRenderer>();
+            }
+
+            if (fluidVolumeRenderer == null)
+            {
+                fluidVolumeRenderer = FindObjectOfType<BucketFluidVolumeRenderer>();
+            }
+
+            if (fluidDebugPanel == null)
+            {
+                fluidDebugPanel = FindObjectOfType<FluidDebugPanel>();
             }
 
             if (paintSurface == null)

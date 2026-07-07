@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   gravity: 9.81
   damping: 0.05
-  initialAngle: 0
+  initialAngle: 30
   angularVelocity: 0
   initialLateralAngularVelocity: 25
   direction: 0
@@ -30,5 +30,5 @@ MonoBehaviour:
   paintQuantity: 100
   paintColor: {r: 0.05, g: 0.22, b: 0.95, a: 1}
   paintHoleDiameter: 0.035
-  surfaceAbsorption: 0.1
+  surfaceAbsorption: 0.62
   paintSpreadRadius: 0.45

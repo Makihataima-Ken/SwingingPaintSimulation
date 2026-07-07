@@ -23,8 +23,12 @@ namespace SwingingPaint.BucketFluid.Rendering
         public CanvasPaintSurface paintSurface;
 
         [Header("Display")]
-        public bool showPanel = true;
+        public bool showPanel = false;
         public Rect panelRect = new Rect(12f, 12f, 380f, 700f);
+
+        [Header("Debug View")]
+        public bool forceParticleDebugView = true;
+        public bool hideVolumeInParticleDebugView = true;
 
         private void Awake()
         {
@@ -46,6 +50,7 @@ namespace SwingingPaint.BucketFluid.Rendering
             }
 
             ResolveReferences();
+            ApplyDebugViewOverride();
 
             GUILayout.BeginArea(panelRect, GUI.skin.box);
             GUILayout.Label("Bucket Fluid Debug");
@@ -151,6 +156,17 @@ namespace SwingingPaint.BucketFluid.Rendering
             GUILayout.EndArea();
         }
 
+        private void LateUpdate()
+        {
+            if (!showPanel)
+            {
+                return;
+            }
+
+            ResolveReferences();
+            ApplyDebugViewOverride();
+        }
+
         private void DrawControls()
         {
             GUILayout.BeginHorizontal();
@@ -251,6 +267,29 @@ namespace SwingingPaint.BucketFluid.Rendering
             if (paintSurface == null)
             {
                 paintSurface = FindObjectOfType<CanvasPaintSurface>();
+            }
+        }
+
+        private void ApplyDebugViewOverride()
+        {
+            if (!forceParticleDebugView)
+            {
+                return;
+            }
+
+            if (fluidRenderer != null)
+            {
+                fluidRenderer.renderEnabled = true;
+            }
+
+            if (fluidVolumeRenderer != null)
+            {
+                fluidVolumeRenderer.disableParticleCloudInPresentation = false;
+
+                if (hideVolumeInParticleDebugView)
+                {
+                    fluidVolumeRenderer.renderEnabled = false;
+                }
             }
         }
 

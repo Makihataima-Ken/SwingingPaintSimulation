@@ -1161,7 +1161,7 @@ MonoBehaviour:
   renderBounds:
     m_Center: {x: 0, y: -0.35, z: 0}
     m_Extent: {x: 1, y: 1, z: 1}
-  renderEnabled: 0
+  renderEnabled: 1
   renderRadius: 0.055
 --- !u!1 &48000001
 GameObject:
@@ -1283,7 +1283,7 @@ MonoBehaviour:
   dischargeCoefficient: 0.62
   viscosityFlowDamping: 0.8
   fallingAirTurbulence: 0.18
-  startAngle: 0
+  startAngle: 30
   sidePushVelocity: 25
   swingDirection: 0
   ropeLength: 1.98
@@ -1477,8 +1477,8 @@ MonoBehaviour:
   outflowController: {fileID: 46000006}
   particleRenderer: {fileID: 47000003}
   volumeMaterial: {fileID: 2100000, guid: 5d6e7f8091a24344bbccddeeff001122, type: 2}
-  renderEnabled: 1
-  disableParticleCloudInPresentation: 1
+  renderEnabled: 0
+  disableParticleCloudInPresentation: 0
   segments: 64
   verticalRings: 8
   capRings: 6
