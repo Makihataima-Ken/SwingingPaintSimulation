@@ -13,11 +13,11 @@ MonoBehaviour:
   m_Name: PhysicsSettings
   m_EditorClassIdentifier: 
   gravity: 9.81
-  damping: 0.67391306
+  damping: 0.05
   initialAngle: 30
   angularVelocity: 0
-  initialLateralAngularVelocity: 720
-  direction: 180
+  initialLateralAngularVelocity: 25
+  direction: 0
   bucketMass: 1.2
   paintMass: 1
   airResistance: 0.02
@@ -28,7 +28,7 @@ MonoBehaviour:
   paintFlowRate: 2
   paintViscosity: 1.2
   paintQuantity: 100
-  paintColor: {r: 0.05, g: 0.22, b: 0.95, a: 1}
+  paintColor: {r: 1, g: 0, b: 0, a: 1}
   paintHoleDiameter: 0.035
   surfaceAbsorption: 0.62
   paintSpreadRadius: 0.45
