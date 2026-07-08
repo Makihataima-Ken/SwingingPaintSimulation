@@ -6,7 +6,7 @@ namespace SwingingPaint.BucketFluid
     /// Inspector-facing settings for realistic paint liquid inside the bucket.
     ///
     /// Attach this component to BucketRig or the bucket object that defines the local fluid
-    /// space. These values are pure custom-simulation data for the future GPU particle solver;
+    /// space. These values are pure custom-simulation data for the GPU particle solver;
     /// they do not use built-in physics.
     /// </summary>
     public class BucketFluidSettings : MonoBehaviour
@@ -103,23 +103,6 @@ namespace SwingingPaint.BucketFluid
         [Tooltip("Global velocity damping applied by the custom solver.")]
         public float damping = 0.02f;
 
-        // Deprecated serialized compatibility only. BucketFluidBoundary is the authoritative
-        // source for bucket shape, gizmos, wall response, initialization, and boundary collision.
-        [HideInInspector]
-        public float bucketHeight = 0.85f;
-
-        [HideInInspector]
-        public float bottomRadius = 0.34f;
-
-        [HideInInspector]
-        public float topRadius = 0.47f;
-
-        [HideInInspector]
-        public float bottomY = -0.75f;
-
-        [HideInInspector]
-        public float topY = 0.1f;
-
         // Initial paint fill amount as a fraction of the bucket's interior height. Lower values
         // leave visible empty space for sloshing; higher values make spilling more likely later.
         [Header("Fluid Fill")]
@@ -142,12 +125,6 @@ namespace SwingingPaint.BucketFluid
         // square grid. Disabling it uses concentric rings instead.
         [Tooltip("Use staggered hexagonal circular layers for initial particle placement.")]
         public bool useHexPacking = true;
-
-        [HideInInspector]
-        public float wallDamping = 0.45f;
-
-        [HideInInspector]
-        public float wallFriction = 0.25f;
 
         // Base color used by the renderer. Rich opaque colors make the liquid read more like
         // paint than water.
@@ -186,14 +163,6 @@ namespace SwingingPaint.BucketFluid
         [Tooltip("Enable debug information for fluid development.")]
         public bool enableDebug = false;
 
-        [HideInInspector]
-        public bool drawBoundaryGizmos = true;
-
-        /// <summary>
-        /// Backwards-compatible alias for older placeholder code.
-        /// </summary>
-        public int ParticleCount => ActiveParticleCount;
-
         [System.NonSerialized] private Color _lastValidatedPaintColor;
         [System.NonSerialized] private float _lastValidatedOpacity;
         [System.NonSerialized] private bool _hasValidatedPaintAppearance;
@@ -227,21 +196,9 @@ namespace SwingingPaint.BucketFluid
             maxVelocity = Mathf.Max(0.0001f, maxVelocity);
             damping = Mathf.Max(0f, damping);
 
-            bucketHeight = Mathf.Max(0.0001f, bucketHeight);
-            bottomRadius = Mathf.Max(0.0001f, bottomRadius);
-            topRadius = Mathf.Max(0.0001f, topRadius);
-
-            if (topY <= bottomY)
-            {
-                topY = bottomY + bucketHeight;
-            }
-
-            bucketHeight = Mathf.Max(0.0001f, topY - bottomY);
             fillHeightPercent = Mathf.Clamp01(fillHeightPercent);
             fillHeightPercent = Mathf.Max(0.01f, fillHeightPercent);
             spawnJitter = Mathf.Clamp(spawnJitter, 0f, 0.45f);
-            wallDamping = Mathf.Clamp01(wallDamping);
-            wallFriction = Mathf.Max(0f, wallFriction);
 
             particleVisualSize = Mathf.Max(0.0001f, particleVisualSize);
             opacity = Mathf.Clamp01(opacity);

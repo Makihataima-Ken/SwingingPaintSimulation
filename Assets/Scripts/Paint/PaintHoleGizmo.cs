@@ -4,7 +4,7 @@ using SwingingPaint.BucketFluid.Core;
 /// <summary>
 /// Draws a Scene view marker for the PaintHole transform.
 ///
-/// PaintHole is the future paint emission point at the bottom of BucketRig.
+/// PaintHole is the active paint emission point at the bottom of BucketRig.
 /// It is only a marker transform and does not use Rigidbody, Colliders, or Unity physics.
 /// </summary>
 public class PaintHoleGizmo : MonoBehaviour

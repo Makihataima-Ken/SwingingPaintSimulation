@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: FluidParticleInstanced
-  m_Shader: {fileID: 4800000, guid: 60bff391853245a592f97988680061dc, type: 3}
+  m_Name: GPUOutflowStreamConnector
+  m_Shader: {fileID: 4800000, guid: f22cf658e16fb5c45842b44a8e829b03, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -19,13 +19,15 @@ Material:
   m_CustomRenderQueue: -1
   stringTagMap: {}
   disabledShaderPasses: []
-  m_LockedProperties: 
+  m_LockedProperties:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _ParticleSize: 0.055
-    m_Colors:
-    - _BaseColor: {r: 0.05, g: 0.22, b: 0.95, a: 0.92}
+    - _StreamRadiusMultiplier: 1.7
+    - _TrailLengthMultiplier: 1.6
+    - _MinimumConnectorLength: 0.035
+    - _ConnectorOpacityMultiplier: 1.1
+    m_Colors: []
   m_BuildTextureStacks: []

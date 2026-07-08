@@ -1,15 +1,13 @@
-// Placeholder compute shader for the custom bucket-local fluid solver.
-// Future kernels should keep particle positions in BucketRig local space.
+// Compute shader for the custom bucket-local fluid solver.
+// Kernels keep particle positions in BucketRig local space.
 //
 // Important: this struct order must match GPUFluidSimulator.FluidParticle exactly.
 // Each float3 is followed by a scalar to keep the layout in 16-byte lanes.
 
-#pragma kernel InitParticles
 #pragma kernel ApplyForces
 #pragma kernel PredictPositions
 #pragma kernel ClearSpatialGrid
 #pragma kernel BuildSpatialGrid
-#pragma kernel BuildSpatialHash
 #pragma kernel ComputeDensity
 #pragma kernel SolveConstraints
 #pragma kernel ApplyViscosity
@@ -241,15 +239,6 @@ uint CellIndex(int3 cell)
 }
 
 [numthreads(64, 1, 1)]
-void InitParticles(uint3 id : SV_DispatchThreadID)
-{
-    if (id.x >= _ParticleCount)
-    {
-        return;
-    }
-}
-
-[numthreads(64, 1, 1)]
 void ApplyForces(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= _ParticleCount)
@@ -345,15 +334,6 @@ void BuildSpatialGrid(uint3 id : SV_DispatchThreadID)
     }
 
     particles[id.x] = particle;
-}
-
-[numthreads(64, 1, 1)]
-void BuildSpatialHash(uint3 id : SV_DispatchThreadID)
-{
-    if (id.x >= _ParticleCount)
-    {
-        return;
-    }
 }
 
 [numthreads(64, 1, 1)]

@@ -188,16 +188,6 @@ namespace SwingingPaint.BucketFluid.Core
         /// </summary>
         public ComputeBuffer ParticleBuffer => _particleBuffer;
 
-        /// <summary>
-        /// Legacy placeholder kept null because particle data now lives in ParticleBuffer.
-        /// </summary>
-        public ComputeBuffer PositionBuffer => null;
-
-        /// <summary>
-        /// Legacy placeholder kept null because particle data now lives in ParticleBuffer.
-        /// </summary>
-        public ComputeBuffer VelocityBuffer => null;
-
         private ComputeBuffer _particleBuffer;
         private ComputeBuffer _cellParticleCounts;
         private ComputeBuffer _cellParticleIndices;

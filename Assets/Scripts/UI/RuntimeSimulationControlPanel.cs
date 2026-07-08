@@ -1,0 +1,742 @@
+using SwingingPaint.BucketFluid.Core;
+using SwingingPaint.BucketFluid.Rendering;
+using SwingingPaint.Core;
+using SwingingPaint.Surface;
+using UnityEngine;
+
+namespace SwingingPaint.UI
+{
+    /// <summary>
+    /// Compact play-mode control panel for presentation tuning.
+    /// It edits PresentationTuningControls so runtime UI and Inspector tuning share one path.
+    /// </summary>
+    public class RuntimeSimulationControlPanel : MonoBehaviour
+    {
+        [Header("Display")]
+        public bool showPanel = true;
+        public KeyCode toggleKey = KeyCode.F1;
+        public Rect panelRect = new Rect(12f, 12f, 360f, 520f);
+        [Min(260f)]
+        public float maxPanelWidth = 380f;
+        [Min(220f)]
+        public float maxPanelHeight = 560f;
+
+        [Header("References")]
+        public SimulationManager simulationManager;
+        public PresentationTuningControls tuningControls;
+        public PhysicsSettings physicsSettings;
+        public GPUFluidOutflowController gpuOutflowController;
+        public GPUFluidRenderer fluidRenderer;
+        public BucketFluidVolumeRenderer fluidVolumeRenderer;
+        public FluidDebugPanel fluidDebugPanel;
+        public CanvasPaintSurface paintSurface;
+        public DesktopSpectatorCamera spectatorCamera;
+        public SurfaceMaterialProfile[] surfaceMaterialProfiles;
+
+        private Vector2 _scroll;
+        private bool _restartRecommended;
+
+        private void Awake()
+        {
+            ResolveReferences();
+        }
+
+        private void OnEnable()
+        {
+            ResolveReferences();
+        }
+
+        private void Update()
+        {
+            if (Input.GetKeyDown(toggleKey))
+            {
+                showPanel = !showPanel;
+            }
+        }
+
+        private void OnGUI()
+        {
+            if (!showPanel)
+            {
+                return;
+            }
+
+            ResolveReferences();
+            ClampPanelRectToScreen();
+            panelRect = GUILayout.Window(GetInstanceID(), panelRect, DrawPanel, "Simulation Control");
+        }
+
+        private void DrawPanel(int windowId)
+        {
+            float contentWidth = Mathf.Max(220f, panelRect.width - 18f);
+            float contentHeight = Mathf.Max(120f, panelRect.height - 42f);
+            _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.Width(contentWidth), GUILayout.Height(contentHeight));
+
+            DrawTopControls();
+            DrawStatus();
+            DrawFluidViewControls();
+            DrawCameraControls();
+
+            if (tuningControls == null)
+            {
+                GUILayout.Space(8f);
+                GUILayout.Label("PresentationTuningControls: n/a");
+                GUILayout.Label("Attach or enable it to edit simulation parameters.");
+                GUILayout.EndScrollView();
+                GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f));
+                return;
+            }
+
+            DrawPaintControls();
+            DrawStreamControls();
+            DrawMotionControls();
+            DrawParticleControls();
+            DrawCanvasControls();
+
+            GUILayout.EndScrollView();
+            GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f));
+        }
+
+        private void DrawTopControls()
+        {
+            GUILayout.BeginHorizontal();
+
+            bool paused = simulationManager != null && simulationManager.IsPaused;
+            string pauseLabel = paused ? "Resume" : "Pause";
+            if (GUILayout.Button(pauseLabel))
+            {
+                if (simulationManager != null)
+                {
+                    if (paused)
+                    {
+                        simulationManager.ResumeSimulation();
+                    }
+                    else
+                    {
+                        simulationManager.PauseSimulation();
+                    }
+                }
+            }
+
+            if (GUILayout.Button("Restart"))
+            {
+                ApplyTuning();
+                simulationManager?.RestartSimulation();
+                _restartRecommended = false;
+            }
+
+            if (GUILayout.Button("Reset Sim"))
+            {
+                ApplyTuning();
+                simulationManager?.ResetSimulation();
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+
+            if (GUILayout.Button("Reset Params"))
+            {
+                simulationManager?.ResetParametersToDefaults();
+                tuningControls?.PullCurrentValuesFromScene();
+                _restartRecommended = true;
+            }
+
+            if (GUILayout.Button("Clear Canvas"))
+            {
+                paintSurface?.ClearPaint();
+            }
+
+            if (GUILayout.Button("Hide"))
+            {
+                showPanel = false;
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label($"Toggle: {toggleKey}");
+
+            if (_restartRecommended)
+            {
+                GUILayout.Label("Restart recommended for initial motion / reset-required changes.");
+            }
+        }
+
+        private void DrawStatus()
+        {
+            string fluidParticleStatus = "n/a";
+            if (fluidRenderer != null && fluidRenderer.simulator != null)
+            {
+                fluidParticleStatus = $"{fluidRenderer.simulator.RuntimeActiveParticleCount}/{fluidRenderer.simulator.TargetParticleCount}";
+            }
+
+            string ropeParticleStatus = "n/a";
+            if (simulationManager != null && simulationManager.pendulum != null)
+            {
+                ropeParticleStatus = simulationManager.pendulum.ropeParticleCount.ToString();
+            }
+
+            GUILayout.Space(8f);
+            GUILayout.Label("Status");
+            GUILayout.Label($"State: {(simulationManager != null ? (simulationManager.IsPaused ? "Paused" : "Running") : "n/a")}");
+            GUILayout.Label($"Remaining Paint: {(gpuOutflowController != null ? (gpuOutflowController.RemainingPaintFraction * 100f).ToString("F1") + "%" : "n/a")}");
+            GUILayout.Label($"Active Outflow: {(gpuOutflowController != null ? gpuOutflowController.ActiveOutflowParticles.ToString() : "n/a")}");
+            GUILayout.Label($"Emitted/Tick: {(gpuOutflowController != null ? gpuOutflowController.EmittedParticlesThisTick.ToString() : "n/a")}");
+            GUILayout.Label($"Canvas Writes/Tick: {(gpuOutflowController != null ? gpuOutflowController.CanvasGpuWritesThisTick.ToString() : "n/a")}");
+            GUILayout.Label($"Bucket Holes: {(gpuOutflowController != null ? gpuOutflowController.EffectiveHoleCount.ToString() : "n/a")}");
+            GUILayout.Label($"Fluid Particles: {fluidParticleStatus}");
+            GUILayout.Label($"Rope Particles: {ropeParticleStatus}");
+            GUILayout.Label($"Physical Flow: {(gpuOutflowController != null ? gpuOutflowController.CurrentPhysicalFlowRateCubicMetersPerSecond.ToString("F6") : "n/a")}");
+        }
+
+        private void DrawFluidViewControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Fluid View");
+
+            bool particlesSelected = fluidRenderer != null && fluidRenderer.renderEnabled;
+            bool volumeSelected = fluidVolumeRenderer != null && fluidVolumeRenderer.renderEnabled && !particlesSelected;
+            GUILayout.Label($"Mode: {(particlesSelected ? "Particles" : volumeSelected ? "Static Fluid" : "n/a")}");
+
+            GUILayout.BeginHorizontal();
+
+            GUI.enabled = !volumeSelected && fluidVolumeRenderer != null;
+            if (GUILayout.Button("Static Fluid"))
+            {
+                ApplyFluidView(useParticles: false);
+            }
+
+            GUI.enabled = !particlesSelected && fluidRenderer != null;
+            if (GUILayout.Button("Particles"))
+            {
+                ApplyFluidView(useParticles: true);
+            }
+
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawCameraControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Camera / Controls");
+
+            if (spectatorCamera == null)
+            {
+                GUILayout.Label("Spectator Camera: n/a");
+                return;
+            }
+
+            float moveSpeed = spectatorCamera.moveSpeed;
+            if (DrawSlider("Camera Speed", ref moveSpeed, 0.1f, 12f, false))
+            {
+                spectatorCamera.moveSpeed = moveSpeed;
+            }
+
+            float sensitivity = spectatorCamera.mouseSensitivity;
+            if (DrawSlider("Mouse Sens.", ref sensitivity, 0.1f, 8f, false))
+            {
+                spectatorCamera.mouseSensitivity = sensitivity;
+            }
+
+            bool followBucket = spectatorCamera.followBucket;
+            bool newFollowBucket = GUILayout.Toggle(followBucket, "Follow Bucket");
+            if (newFollowBucket != followBucket)
+            {
+                spectatorCamera.SetFollowBucket(newFollowBucket);
+            }
+
+            bool lookAtBucket = spectatorCamera.lookAtBucket;
+            bool newLookAtBucket = GUILayout.Toggle(lookAtBucket, "Look At Bucket");
+            if (newLookAtBucket != lookAtBucket)
+            {
+                spectatorCamera.SetLookAtBucket(newLookAtBucket);
+            }
+
+            bool lookAtCanvas = spectatorCamera.lookAtCanvas;
+            bool newLookAtCanvas = GUILayout.Toggle(lookAtCanvas, "Look At Canvas");
+            if (newLookAtCanvas != lookAtCanvas)
+            {
+                spectatorCamera.SetLookAtCanvas(newLookAtCanvas);
+            }
+
+            float followSpeed = spectatorCamera.smoothFollowSpeed;
+            if (DrawSlider("Follow Smooth", ref followSpeed, 0.5f, 20f, false))
+            {
+                spectatorCamera.smoothFollowSpeed = followSpeed;
+            }
+
+            float lookSpeed = spectatorCamera.smoothLookSpeed;
+            if (DrawSlider("Look Smooth", ref lookSpeed, 0.5f, 20f, false))
+            {
+                spectatorCamera.smoothLookSpeed = lookSpeed;
+            }
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Reset Cam"))
+            {
+                spectatorCamera.ResetCameraPose();
+            }
+
+            if (GUILayout.Button("Focus Bucket"))
+            {
+                spectatorCamera.FocusBucket();
+            }
+
+            if (GUILayout.Button("Focus Canvas"))
+            {
+                spectatorCamera.FocusCanvas();
+            }
+
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawCameraPresetButton("Overview", DesktopSpectatorCamera.CameraPreset.Overview);
+            DrawCameraPresetButton("Bucket", DesktopSpectatorCamera.CameraPreset.BucketCloseUp);
+            DrawCameraPresetButton("Canvas", DesktopSpectatorCamera.CameraPreset.CanvasCloseUp);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawCameraPresetButton("Side", DesktopSpectatorCamera.CameraPreset.SideView);
+            DrawCameraPresetButton("Top Debug", DesktopSpectatorCamera.CameraPreset.TopDebug);
+            string helpLabel = spectatorCamera.showControlsHelp ? "Hide Help" : "Show Help";
+            if (GUILayout.Button(helpLabel))
+            {
+                spectatorCamera.showControlsHelp = !spectatorCamera.showControlsHelp;
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("RMB camera look, LMB near bucket grab/throw.");
+        }
+
+        private void DrawCameraPresetButton(string label, DesktopSpectatorCamera.CameraPreset preset)
+        {
+            if (GUILayout.Button(label))
+            {
+                spectatorCamera.ApplyPreset(preset);
+            }
+        }
+
+        private void DrawPaintControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Paint");
+
+            Color color = tuningControls.paintColor;
+            bool colorChanged = false;
+            colorChanged |= DrawSlider("Color R", ref color.r, 0f, 1f, false);
+            colorChanged |= DrawSlider("Color G", ref color.g, 0f, 1f, false);
+            colorChanged |= DrawSlider("Color B", ref color.b, 0f, 1f, false);
+            if (colorChanged)
+            {
+                color.a = Mathf.Clamp01(color.a);
+                tuningControls.paintColor = color;
+                ApplyTuning();
+            }
+
+            DrawTuningSlider("Flow Rate", ref tuningControls.flowRate, 0f, 10f);
+            DrawTuningSlider("Hole Diameter", ref tuningControls.holeDiameter, 0f, 0.12f);
+            DrawHoleCountControls();
+            DrawTuningSlider("Viscosity", ref tuningControls.viscosity, 0f, 5f);
+            DrawTuningSlider("Paint Quantity", ref tuningControls.logicalPaintQuantity, 0f, 250f);
+            DrawTuningToggle("Infinite Paint", ref tuningControls.infinitePaintSupplyForTuning);
+        }
+
+        private void DrawHoleCountControls()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Hole Count", GUILayout.Width(115f));
+            DrawHoleCountButton(1);
+            DrawHoleCountButton(2);
+            DrawHoleCountButton(4);
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawHoleCountButton(int holeCount)
+        {
+            bool selected = tuningControls.bucketHoleCount == holeCount;
+            GUI.enabled = !selected;
+            if (GUILayout.Button(selected ? $"[{holeCount}]" : holeCount.ToString()))
+            {
+                tuningControls.bucketHoleCount = holeCount;
+                ApplyTuning();
+            }
+
+            GUI.enabled = true;
+        }
+
+        private void DrawStreamControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Stream");
+            DrawTuningSlider("Stream Width", ref tuningControls.streamWidth, 0.5f, 4f);
+            DrawTuningSlider("Continuity", ref tuningControls.streamContinuity, 0f, 1f);
+            DrawTuningSlider("Visual Continuity", ref tuningControls.streamVisualContinuity, 0f, 1f);
+            DrawTuningSlider("Trail Length", ref tuningControls.streamTrailLength, 0.5f, 4f);
+            DrawTuningSlider("Outflow Lifetime", ref tuningControls.outflowLifetime, 0.1f, 60f);
+            DrawTuningSlider("Stream Opacity", ref tuningControls.streamOpacity, 0f, 2f);
+        }
+
+        private void DrawMotionControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Motion");
+            if (physicsSettings != null)
+            {
+                float gravity = physicsSettings.Gravity;
+                if (DrawSlider("Gravity", ref gravity, 0f, 20f, false))
+                {
+                    physicsSettings.SetGravity(gravity);
+                }
+            }
+            else
+            {
+                GUILayout.Label("Gravity: n/a");
+            }
+
+            DrawTuningSlider("Start Angle", ref tuningControls.startAngle, -90f, 90f, true);
+            DrawTuningSlider("Side Push", ref tuningControls.sidePushVelocity, -720f, 720f, true);
+            DrawTuningSlider("Swing Direction", ref tuningControls.swingDirection, -180f, 180f, true);
+            DrawTuningSlider("Rope Length", ref tuningControls.ropeLength, 0.5f, 5f, true);
+            DrawTuningSlider("Motion Damping", ref tuningControls.motionDamping, 0f, 1f);
+        }
+
+        private void DrawParticleControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Particles");
+
+            bool presentationMode = tuningControls.presentationMode;
+            bool newPresentationMode = GUILayout.Toggle(presentationMode, "Presentation Fluid Count");
+            if (newPresentationMode != presentationMode)
+            {
+                tuningControls.presentationMode = newPresentationMode;
+                ApplyTuning();
+                _restartRecommended = true;
+            }
+
+            DrawActiveFluidParticleCount();
+            DrawTuningIntSlider("Rope Particles", ref tuningControls.ropeParticleCount, 2, 64, true);
+        }
+
+        private void DrawActiveFluidParticleCount()
+        {
+            int fluidParticleCount = tuningControls.presentationMode
+                ? tuningControls.presentationParticleCount
+                : tuningControls.developmentParticleCount;
+
+            if (!DrawIntSlider("Fluid Particles", ref fluidParticleCount, 100, 20000))
+            {
+                return;
+            }
+
+            if (tuningControls.presentationMode)
+            {
+                tuningControls.presentationParticleCount = fluidParticleCount;
+            }
+            else
+            {
+                tuningControls.developmentParticleCount = fluidParticleCount;
+            }
+
+            ApplyTuning();
+            _restartRecommended = true;
+        }
+
+        private void DrawCanvasControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Canvas Result");
+            DrawCanvasSlopeControls();
+            DrawSurfaceMaterialControls();
+            DrawTuningSlider("Downhill Flow", ref tuningControls.downhillFlowSpeed, 0.1f, 4f);
+            DrawTuningSlider("Rivulets", ref tuningControls.rivuletStrength, 0f, 2f);
+            DrawTuningSlider("Wet Trail", ref tuningControls.wetTrailRetention, 0f, 1f);
+            DrawTuningSlider("Absorption", ref tuningControls.surfaceAbsorption, 0f, 1f);
+            DrawTuningSlider("Max Impact Radius", ref tuningControls.maxImpactRadius, 0.001f, 0.58f);
+            DrawTuningSlider("Mark Opacity", ref tuningControls.markOpacity, 0f, 2f);
+            DrawTuningSlider("Surface Spread", ref tuningControls.surfaceSpread, 0.05f, 3f);
+            DrawTuningSlider("Splatter", ref tuningControls.splatterStrength, 0f, 3f);
+            DrawTuningSlider("Sliding", ref tuningControls.slidingStrength, 0f, 3f);
+            DrawTuningSlider("Stroke Density", ref tuningControls.canvasStrokeDensity, 0.25f, 3f);
+            DrawTuningSlider("Stroke Overlap", ref tuningControls.canvasStrokeOverlap, 0.5f, 2f);
+        }
+
+        private void DrawCanvasSlopeControls()
+        {
+            DrawTuningToggle("Enable Canvas Slope", ref tuningControls.canvasSlopeEnabled);
+            DrawTuningSlider("Slope X", ref tuningControls.canvasSlopeX, -60f, 60f);
+            DrawTuningSlider("Slope Z", ref tuningControls.canvasSlopeZ, -60f, 60f);
+
+            if (GUILayout.Button("Reset Slope"))
+            {
+                tuningControls.canvasSlopeEnabled = false;
+                tuningControls.canvasSlopeX = 0f;
+                tuningControls.canvasSlopeZ = 0f;
+                ApplyTuning();
+            }
+        }
+
+        private void DrawSurfaceMaterialControls()
+        {
+            SurfaceMaterialProfile currentProfile = tuningControls.surfaceMaterialProfile;
+            string currentName = currentProfile != null ? currentProfile.name : "Fallback";
+            GUILayout.Label($"Material: {currentName}");
+
+            int buttonsInRow = 0;
+            GUILayout.BeginHorizontal();
+            DrawSurfaceMaterialButton("Fallback", null, currentProfile == null);
+            buttonsInRow++;
+
+            if (surfaceMaterialProfiles != null)
+            {
+                for (int i = 0; i < surfaceMaterialProfiles.Length; i++)
+                {
+                    SurfaceMaterialProfile profile = surfaceMaterialProfiles[i];
+                    if (profile == null)
+                    {
+                        continue;
+                    }
+
+                    if (buttonsInRow >= 3)
+                    {
+                        GUILayout.EndHorizontal();
+                        GUILayout.BeginHorizontal();
+                        buttonsInRow = 0;
+                    }
+
+                    DrawSurfaceMaterialButton(profile.name, profile, currentProfile == profile);
+                    buttonsInRow++;
+                }
+            }
+
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawSurfaceMaterialButton(string label, SurfaceMaterialProfile profile, bool selected)
+        {
+            GUI.enabled = !selected;
+            if (GUILayout.Button(selected ? $"[{label}]" : label))
+            {
+                tuningControls.surfaceMaterialProfile = profile;
+                tuningControls.PullSurfaceMaterialControlValues();
+                ApplyTuning();
+            }
+
+            GUI.enabled = true;
+        }
+
+        private void DrawTuningSlider(string label, ref float value, float min, float max, bool restartRequired = false)
+        {
+            if (DrawSlider(label, ref value, min, max, restartRequired))
+            {
+                ApplyTuning();
+                if (restartRequired)
+                {
+                    _restartRecommended = true;
+                }
+            }
+        }
+
+        private bool DrawSlider(string label, ref float value, float min, float max, bool restartRequired)
+        {
+            float sliderWidth = Mathf.Max(80f, panelRect.width - 230f);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, GUILayout.Width(115f));
+            float newValue = GUILayout.HorizontalSlider(value, min, max, GUILayout.Width(sliderWidth));
+            GUILayout.Label(newValue.ToString("F3"), GUILayout.Width(50f));
+            GUILayout.EndHorizontal();
+
+            if (Mathf.Approximately(value, newValue))
+            {
+                return false;
+            }
+
+            value = newValue;
+            return true;
+        }
+
+        private void DrawTuningIntSlider(string label, ref int value, int min, int max, bool restartRequired = false)
+        {
+            if (DrawIntSlider(label, ref value, min, max))
+            {
+                ApplyTuning();
+                if (restartRequired)
+                {
+                    _restartRecommended = true;
+                }
+            }
+        }
+
+        private bool DrawIntSlider(string label, ref int value, int min, int max)
+        {
+            float sliderWidth = Mathf.Max(80f, panelRect.width - 230f);
+            int safeMin = Mathf.Min(min, max);
+            int safeMax = Mathf.Max(min, max);
+            int safeValue = Mathf.Clamp(value, safeMin, safeMax);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, GUILayout.Width(115f));
+            float sliderValue = GUILayout.HorizontalSlider(safeValue, safeMin, safeMax, GUILayout.Width(sliderWidth));
+            int newValue = Mathf.RoundToInt(sliderValue);
+            GUILayout.Label(newValue.ToString(), GUILayout.Width(50f));
+            GUILayout.EndHorizontal();
+
+            if (value == newValue)
+            {
+                return false;
+            }
+
+            value = newValue;
+            return true;
+        }
+
+        private void DrawTuningToggle(string label, ref bool value)
+        {
+            bool newValue = GUILayout.Toggle(value, label);
+            if (newValue == value)
+            {
+                return;
+            }
+
+            value = newValue;
+            ApplyTuning();
+        }
+
+        private void ApplyTuning()
+        {
+            tuningControls?.ApplyTuning();
+        }
+
+        private void ApplyFluidView(bool useParticles)
+        {
+            HideFluidDebugPanel();
+
+            if (fluidRenderer != null)
+            {
+                fluidRenderer.renderEnabled = useParticles;
+            }
+
+            if (fluidVolumeRenderer != null)
+            {
+                fluidVolumeRenderer.disableParticleCloudInPresentation = false;
+                fluidVolumeRenderer.renderEnabled = !useParticles;
+            }
+        }
+
+        private void HideFluidDebugPanel()
+        {
+            if (fluidDebugPanel == null)
+            {
+                return;
+            }
+
+            fluidDebugPanel.showPanel = false;
+            fluidDebugPanel.forceParticleDebugView = false;
+        }
+
+        private void ResolveReferences()
+        {
+            if (simulationManager == null)
+            {
+                simulationManager = SimulationManager.Instance != null
+                    ? SimulationManager.Instance
+                    : FindObjectOfType<SimulationManager>();
+            }
+
+            if (tuningControls == null)
+            {
+                tuningControls = FindObjectOfType<PresentationTuningControls>();
+            }
+
+            if (physicsSettings == null)
+            {
+                if (simulationManager != null)
+                {
+                    physicsSettings = simulationManager.physicsSettings;
+                }
+
+                if (physicsSettings == null)
+                {
+                    physicsSettings = Resources.Load<PhysicsSettings>("PhysicsSettings");
+                }
+            }
+
+            if (gpuOutflowController == null)
+            {
+                if (tuningControls != null)
+                {
+                    gpuOutflowController = tuningControls.outflowController;
+                }
+
+                if (gpuOutflowController == null && simulationManager != null)
+                {
+                    gpuOutflowController = simulationManager.gpuOutflowController;
+                }
+
+                if (gpuOutflowController == null)
+                {
+                    gpuOutflowController = FindObjectOfType<GPUFluidOutflowController>();
+                }
+            }
+
+            if (fluidRenderer == null)
+            {
+                fluidRenderer = FindObjectOfType<GPUFluidRenderer>();
+            }
+
+            if (fluidVolumeRenderer == null)
+            {
+                fluidVolumeRenderer = FindObjectOfType<BucketFluidVolumeRenderer>();
+            }
+
+            if (fluidDebugPanel == null)
+            {
+                fluidDebugPanel = FindObjectOfType<FluidDebugPanel>();
+            }
+
+            if (paintSurface == null)
+            {
+                if (tuningControls != null)
+                {
+                    paintSurface = tuningControls.paintSurface;
+                }
+
+                if (paintSurface == null && simulationManager != null)
+                {
+                    paintSurface = simulationManager.paintSurface;
+                }
+
+                if (paintSurface == null)
+                {
+                    paintSurface = FindObjectOfType<CanvasPaintSurface>();
+                }
+            }
+
+            if (spectatorCamera == null)
+            {
+                spectatorCamera = FindObjectOfType<DesktopSpectatorCamera>();
+            }
+        }
+
+        private void OnValidate()
+        {
+            maxPanelWidth = Mathf.Max(260f, maxPanelWidth);
+            maxPanelHeight = Mathf.Max(220f, maxPanelHeight);
+            panelRect.width = Mathf.Clamp(panelRect.width, 260f, maxPanelWidth);
+            panelRect.height = Mathf.Clamp(panelRect.height, 220f, maxPanelHeight);
+        }
+
+        private void ClampPanelRectToScreen()
+        {
+            float screenWidth = Mathf.Max(1f, Screen.width);
+            float screenHeight = Mathf.Max(1f, Screen.height);
+            float safeMaxWidth = Mathf.Min(maxPanelWidth, Mathf.Max(260f, screenWidth - 24f));
+            float safeMaxHeight = Mathf.Min(maxPanelHeight, Mathf.Max(220f, screenHeight - 24f));
+
+            panelRect.width = Mathf.Clamp(panelRect.width, 260f, safeMaxWidth);
+            panelRect.height = Mathf.Clamp(panelRect.height, 220f, safeMaxHeight);
+            panelRect.x = Mathf.Clamp(panelRect.x, 0f, Mathf.Max(0f, screenWidth - panelRect.width));
+            panelRect.y = Mathf.Clamp(panelRect.y, 0f, Mathf.Max(0f, screenHeight - panelRect.height));
+        }
+    }
+}

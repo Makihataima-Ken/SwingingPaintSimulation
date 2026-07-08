@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 68aea5b2c3dd48fabe30ba8d5ecb9b3e, type: 3}
+  m_Name: Metal
+  m_EditorClassIdentifier: 
+  baseColor: {r: 0.65, g: 0.67, b: 0.68, a: 1}
+  absorption: 0.02
+  spread: 1.85
+  roughness: 0.24
+  dryingSpeed: 0.24
+  mixingRate: 0.6
+  edgeNoise: 0.22
+  splatter: 1.15
+  sliding: 1.45
+  wetGloss: 0.82
+  noiseScale: 0.8
+  beading: 0.65
+  downhillFlowSpeed: 1
+  rivuletStrength: 0
+  wetTrailRetention: 0

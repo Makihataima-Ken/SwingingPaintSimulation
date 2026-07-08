@@ -1,9 +1,6 @@
 using UnityEngine;
 using SwingingPaint.BucketFluid.Core;
-using SwingingPaint.Paint;
 using SwingingPaint.Surface;
-using SwingingPaint.UI;
-using SwingingPaint.Core;
 
 namespace SwingingPaint.Core
 {
@@ -19,7 +16,6 @@ namespace SwingingPaint.Core
     /// Design decisions:
     /// - Singleton pattern via static Instance for easy access from UI and other systems.
     /// - Does not perform physics itself; delegates to Pendulum and other systems.
-    /// - Reset captures the initial state at start so Restart can restore it exactly.
     /// </summary>
     public class SimulationManager : MonoBehaviour
     {
@@ -31,18 +27,13 @@ namespace SwingingPaint.Core
         [Tooltip("The Pendulum component driving the simulation.")]
         public Pendulum pendulum;
         public global::BucketOrientationController bucketOrientationController;
-        public SimulationSettings simulationSettings;
         public BucketMotionProvider bucketMotionProvider;
         public GPUFluidSimulator fluidSimulator;
         public GPUFluidOutflowController gpuOutflowController;
-        public PaintEmitter paintEmitter;
         public CanvasPaintSurface paintSurface;
-        public UIController uiController;
 
         [Header("Fixed Step Runtime")]
         public bool driveFixedStepSimulation = true;
-        [Tooltip("Development fallback only. Keep off for the final project so failed GPU paint does not produce misleading output.")]
-        public bool allowCpuPaintFallback = false;
         [Min(0.001f)]
         public float fixedTimestep = 1f / 45f;
         [Min(1)]
@@ -51,11 +42,8 @@ namespace SwingingPaint.Core
         public float maxAccumulatedTime = 0.05f;
 
         private bool _isPaused = false;
-        private float _initialAngle;
-        private float _initialAngularVelocity;
         private float _accumulator;
         private PhysicsSettings _subscribedSettings;
-        private bool _warnedCpuPaintFallbackDisabled;
 
         /// <summary>
         /// Global access to the active SimulationManager.
@@ -117,12 +105,6 @@ namespace SwingingPaint.Core
             SubscribeToSettings();
             ValidateGpuRuntime();
 
-            // Capture initial pendulum state for reset/restart
-            if (pendulum != null)
-            {
-                _initialAngle = pendulum.CurrentAngle;
-                _initialAngularVelocity = pendulum.CurrentAngularVelocity;
-            }
         }
 
         private void Update()
@@ -132,14 +114,13 @@ namespace SwingingPaint.Core
                 return;
             }
 
-            if (_isPaused || (simulationSettings != null && !simulationSettings.SimulationRunning))
+            if (_isPaused)
             {
                 _accumulator = 0f;
                 return;
             }
 
-            float timeScale = simulationSettings != null ? simulationSettings.TimeScale : 1f;
-            float frameDeltaTime = Mathf.Max(0f, Time.deltaTime * timeScale);
+            float frameDeltaTime = Mathf.Max(0f, Time.deltaTime);
             float stepDeltaTime = Mathf.Max(0.001f, fixedTimestep);
             _accumulator = Mathf.Min(_accumulator + frameDeltaTime, Mathf.Max(stepDeltaTime, maxAccumulatedTime));
 
@@ -227,11 +208,6 @@ namespace SwingingPaint.Core
             if (gpuOutflowController != null)
             {
                 gpuOutflowController.ResetOutflow();
-            }
-
-            if (paintEmitter != null)
-            {
-                paintEmitter.ResetEmitter();
             }
 
             if (paintSurface != null)
@@ -347,17 +323,6 @@ namespace SwingingPaint.Core
                 fluidSimulator.settings.opacity = physicsSettings.PaintColor.a;
             }
 
-            if (paintEmitter != null)
-            {
-                paintEmitter.physicsSettings = physicsSettings;
-                paintEmitter.gravity = physicsSettings.Gravity;
-                paintEmitter.airResistance = physicsSettings.AirResistance;
-                paintEmitter.holeDiameter = physicsSettings.PaintHoleDiameter;
-                paintEmitter.defaultFlowRate = physicsSettings.PaintFlowRate;
-                paintEmitter.defaultPaintViscosity = physicsSettings.PaintViscosity;
-                paintEmitter.defaultPaintQuantity = physicsSettings.PaintQuantity;
-            }
-
             if (gpuOutflowController != null)
             {
                 gpuOutflowController.physicsSettings = physicsSettings;
@@ -368,12 +333,6 @@ namespace SwingingPaint.Core
             {
                 paintSurface.physicsSettings = physicsSettings;
                 paintSurface.defaultAbsorption = physicsSettings.SurfaceAbsorption;
-            }
-
-            if (uiController != null)
-            {
-                uiController.physicsSettings = physicsSettings;
-                uiController.RefreshUI();
             }
         }
 
@@ -400,7 +359,12 @@ namespace SwingingPaint.Core
 
         private void StepSimulation(float deltaTime)
         {
-            // Step order: pendulum position, bucket orientation, bucket motion sample, fluid, falling paint/deposition.
+            StepBucketMotionSystems(deltaTime);
+            StepFluidSystem(deltaTime);
+        }
+
+        private void StepBucketMotionSystems(float deltaTime)
+        {
             if (pendulum != null)
             {
                 pendulum.StepSimulation(deltaTime);
@@ -415,29 +379,13 @@ namespace SwingingPaint.Core
             {
                 bucketMotionProvider.StepMotion(deltaTime);
             }
+        }
 
+        private void StepFluidSystem(float deltaTime)
+        {
             if (fluidSimulator != null)
             {
                 fluidSimulator.StepSimulation(deltaTime);
-            }
-
-            if (gpuOutflowController == null && fluidSimulator != null)
-            {
-                gpuOutflowController = fluidSimulator.outflowController;
-            }
-
-            bool gpuOutflowCanRun = gpuOutflowController != null && gpuOutflowController.CanRunPrimaryOutflow;
-            if (paintEmitter != null && !gpuOutflowCanRun && allowCpuPaintFallback)
-            {
-                paintEmitter.Step(deltaTime);
-            }
-            else if (paintEmitter != null && !gpuOutflowCanRun && !_warnedCpuPaintFallbackDisabled)
-            {
-                _warnedCpuPaintFallbackDisabled = true;
-                Debug.LogWarning(
-                    "[SimulationManager] GPU paint outflow is not ready and CPU PaintEmitter fallback is disabled. " +
-                    "Fix GPU setup instead of trusting fallback output.",
-                    this);
             }
         }
 
@@ -467,11 +415,14 @@ namespace SwingingPaint.Core
 
         private void ResolveRuntimeReferences()
         {
-            if (simulationSettings == null && pendulum != null)
-            {
-                simulationSettings = pendulum.simulationSettings;
-            }
+            ResolveCoreRuntimeReferences();
+            ResolvePaintSurfaceReference();
+            ResolvePhysicsSettingsAsset();
+            ApplyPhysicsSettingsReferences();
+        }
 
+        private void ResolveCoreRuntimeReferences()
+        {
             if (pendulum == null)
             {
                 pendulum = FindObjectOfType<Pendulum>();
@@ -484,21 +435,7 @@ namespace SwingingPaint.Core
 
             if (bucketOrientationController == null)
             {
-                Transform bucketTransform = pendulum != null
-                    ? pendulum.bucketTransform
-                    : bucketMotionProvider != null
-                        ? bucketMotionProvider.BucketTransform
-                        : null;
-
-                if (bucketTransform != null)
-                {
-                    bucketOrientationController = bucketTransform.GetComponent<global::BucketOrientationController>();
-                }
-            }
-
-            if (bucketOrientationController == null)
-            {
-                bucketOrientationController = FindObjectOfType<global::BucketOrientationController>();
+                ResolveBucketOrientationControllerReference();
             }
 
             if (fluidSimulator == null)
@@ -515,33 +452,46 @@ namespace SwingingPaint.Core
             {
                 gpuOutflowController = FindObjectOfType<GPUFluidOutflowController>();
             }
+        }
 
-            if (paintEmitter == null)
+        private void ResolveBucketOrientationControllerReference()
+        {
+            Transform bucketTransform = pendulum != null
+                ? pendulum.bucketTransform
+                : bucketMotionProvider != null
+                    ? bucketMotionProvider.BucketTransform
+                    : null;
+
+            if (bucketTransform != null)
             {
-                paintEmitter = FindObjectOfType<PaintEmitter>();
+                bucketOrientationController = bucketTransform.GetComponent<global::BucketOrientationController>();
             }
 
+            if (bucketOrientationController == null)
+            {
+                bucketOrientationController = FindObjectOfType<global::BucketOrientationController>();
+            }
+        }
+
+        private void ResolvePaintSurfaceReference()
+        {
             if (paintSurface == null)
             {
                 paintSurface = FindObjectOfType<CanvasPaintSurface>();
             }
+        }
 
-            if (uiController == null)
-            {
-                uiController = FindObjectOfType<UIController>();
-            }
-
+        private void ResolvePhysicsSettingsAsset()
+        {
             if (physicsSettings == null)
             {
                 physicsSettings = Resources.Load<PhysicsSettings>("PhysicsSettings");
                 SubscribeToSettings();
             }
+        }
 
-            if (paintEmitter != null && paintEmitter.physicsSettings == null)
-            {
-                paintEmitter.physicsSettings = physicsSettings;
-            }
-
+        private void ApplyPhysicsSettingsReferences()
+        {
             if (gpuOutflowController != null && gpuOutflowController.physicsSettings == null)
             {
                 gpuOutflowController.physicsSettings = physicsSettings;
@@ -550,11 +500,6 @@ namespace SwingingPaint.Core
             if (paintSurface != null && paintSurface.physicsSettings == null)
             {
                 paintSurface.physicsSettings = physicsSettings;
-            }
-
-            if (uiController != null && uiController.physicsSettings == null)
-            {
-                uiController.physicsSettings = physicsSettings;
             }
         }
 

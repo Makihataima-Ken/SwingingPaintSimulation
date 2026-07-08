@@ -13,21 +13,12 @@ using SpringRopeSolver = SwingingPaint.Physics.SpringRope;
 /// </summary>
 public class Pendulum : MonoBehaviour
 {
-    public enum MotionMode
-    {
-        Physical3DPendulum,
-        PlanarPendulum
-    }
-
     [Header("References")]
     [Tooltip("World-space pivot point the rope hangs from. If empty, this GameObject is used.")]
     public Transform anchorTransform;
 
     [Tooltip("Motion point moved manually by this script. Assign BucketRig here, not the visual BucketModel child.")]
     public Transform bucketTransform;
-
-    [Tooltip("Optional global settings source. If assigned, its TimeScale and SimulationRunning values are used.")]
-    public SimulationSettings simulationSettings;
 
     [Header("Pendulum Settings")]
     [Tooltip("Starting angle from vertical, in degrees.")]
@@ -48,9 +39,6 @@ public class Pendulum : MonoBehaviour
     [Tooltip("Manual gravitational acceleration used by the rope solver.")]
     public float gravity = 9.81f;
 
-    [Header("Motion Mode")]
-    public MotionMode motionMode = MotionMode.Physical3DPendulum;
-
     [HideInInspector]
     public float swingDirectionDegrees = 0f;
 
@@ -63,7 +51,7 @@ public class Pendulum : MonoBehaviour
     [Tooltip("Dry bucket mass in kilograms for the custom pendulum model.")]
     public float bucketMass = 1.2f;
 
-    [Tooltip("Remaining paint mass inside the bucket in kilograms. Future pouring systems should reduce this value.")]
+    [Tooltip("Remaining paint mass inside the bucket in kilograms. Reserved for custom outflow systems that model mass loss.")]
     public float paintMass = 1f;
 
     [Tooltip("Linear air resistance coefficient applied to custom motion.")]
@@ -140,9 +128,6 @@ public class Pendulum : MonoBehaviour
 
     [Tooltip("Hard cap on rope particle speed, world units per second.")]
     public float maxRadialSpeed = 50f;
-
-    [Tooltip("Backward-compatible angular-speed cap field. The 3D rope solver uses maxRadialSpeed for particle speed.")]
-    public float maxAngularSpeed = 50f;
 
     [Header("Debug Drawing")]
     [Tooltip("Draw anchor, rope, and initial push direction gizmos in the Scene view.")]
@@ -247,8 +232,7 @@ public class Pendulum : MonoBehaviour
             return;
         }
 
-        float timeScale = simulationSettings != null ? simulationSettings.TimeScale : 1f;
-        StepSimulation(Time.deltaTime * timeScale);
+        StepSimulation(Time.deltaTime);
     }
 
     public void StepSimulation(float dt)
@@ -268,11 +252,6 @@ public class Pendulum : MonoBehaviour
         if (_swingLimitReached)
         {
             StopActiveMotion();
-            return;
-        }
-
-        if (simulationSettings != null && !simulationSettings.SimulationRunning)
-        {
             return;
         }
 
@@ -372,11 +351,6 @@ public class Pendulum : MonoBehaviour
         if (anchorTransform == null)
         {
             anchorTransform = transform;
-        }
-
-        if (simulationSettings == null)
-        {
-            simulationSettings = FindObjectOfType<SimulationSettings>();
         }
 
         if (interactionCamera == null)
@@ -524,6 +498,16 @@ public class Pendulum : MonoBehaviour
     private void TryBeginMouseDrag()
     {
         if (bucketTransform == null)
+        {
+            return;
+        }
+
+        if (DesktopSpectatorCamera.IsAnyMouseLookActive)
+        {
+            return;
+        }
+
+        if (ignoreMouseWhenPointerOverUI && GUIUtility.hotControl != 0)
         {
             return;
         }
@@ -842,7 +826,6 @@ public class Pendulum : MonoBehaviour
         maxFrameTime = Mathf.Clamp(maxFrameTime, maxSubStep, 0.5f);
         maxStretchMultiplier = Mathf.Max(1f, maxStretchMultiplier);
         maxRadialSpeed = Mathf.Max(0.1f, maxRadialSpeed);
-        maxAngularSpeed = Mathf.Max(0.1f, maxAngularSpeed);
         maxWorldSpeed = Mathf.Max(0.1f, maxWorldSpeed);
         debugDirectionLength = Mathf.Max(0f, debugDirectionLength);
     }

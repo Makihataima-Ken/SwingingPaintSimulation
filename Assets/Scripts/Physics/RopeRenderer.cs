@@ -1,19 +1,14 @@
 using UnityEngine;
 
 /// <summary>
-/// Draws a visual rope between an anchor point and a bucket attachment point using a LineRenderer.
+/// Draws the rope as a procedural mesh built from the custom Pendulum rope particles.
 ///
-/// This script is visual only. It does not use Rigidbody, Colliders, joints,
-/// raycasts, or Unity's built-in physics engine.
-/// BucketRig is the pendulum motion point; RopeAttachment is the visual endpoint on the bucket.
-///
-/// Because the Pendulum now moves BucketRig to the dynamic (stretched) rope length, the line
-/// between the anchor and the bucket already grows and shrinks on its own. This component is
-/// extended (not replaced) with optional stretch feedback: as the rope extends beyond its rest
-/// length it can thin out and tint toward a "stretched" colour, making the elasticity visible.
+/// This component is visual only. It reads positions from the manual rope solver and writes a
+/// tube-like mesh through MeshFilter/MeshRenderer. It does not use Unity physics, particles,
+/// trails, or built-in rope helpers.
 /// </summary>
 [ExecuteAlways]
-[RequireComponent(typeof(LineRenderer))]
+[RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class RopeRenderer : MonoBehaviour
 {
     [Header("References")]
@@ -30,10 +25,14 @@ public class RopeRenderer : MonoBehaviour
     public Pendulum pendulum;
 
     [Header("Visual Settings")]
-    [Tooltip("Width of the rope line at rest length.")]
+    [Tooltip("Diameter of the procedural rope mesh at rest length.")]
     public float ropeWidth = 0.12f;
 
-    [Tooltip("Optional material used by the LineRenderer.")]
+    [Tooltip("Number of sides around the generated rope tube.")]
+    [Range(3, 12)]
+    public int tubeSides = 6;
+
+    [Tooltip("Optional material used by the procedural rope mesh.")]
     public Material ropeMaterial;
 
     [Header("Stretch Feedback (optional)")]
@@ -53,87 +52,254 @@ public class RopeRenderer : MonoBehaviour
     [Range(0.1f, 1f)]
     public float stretchedWidthScale = 0.6f;
 
-    private LineRenderer _lineRenderer;
+    private static readonly int ColorId = Shader.PropertyToID("_Color");
+    private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+
+    private MeshFilter _meshFilter;
+    private MeshRenderer _meshRenderer;
+    private Mesh _ropeMesh;
+    private Material _runtimeMaterial;
+    private MaterialPropertyBlock _propertyBlock;
+    private Vector3[] _pathPoints;
+    private Vector3[] _vertices;
+    private Vector3[] _normals;
+    private Vector2[] _uvs;
+    private int[] _triangles;
 
     private void Awake()
     {
-        _lineRenderer = GetOrCreateLineRenderer();
         ResolveReferences();
-        ConfigureLineRenderer();
+        EnsureRenderResources();
+    }
+
+    private void OnEnable()
+    {
+        ResolveReferences();
+        EnsureRenderResources();
+        RebuildMesh();
     }
 
     private void Update()
     {
         ResolveReferences();
+        EnsureRenderResources();
+        RebuildMesh();
+    }
 
-        if (_lineRenderer == null)
+    private void OnDestroy()
+    {
+        if (_ropeMesh != null)
         {
-            _lineRenderer = GetOrCreateLineRenderer();
-            ConfigureLineRenderer();
+            if (Application.isPlaying)
+            {
+                Destroy(_ropeMesh);
+            }
+            else
+            {
+                DestroyImmediate(_ropeMesh);
+            }
+
+            _ropeMesh = null;
         }
 
+        if (_runtimeMaterial != null)
+        {
+            if (Application.isPlaying)
+            {
+                Destroy(_runtimeMaterial);
+            }
+            else
+            {
+                DestroyImmediate(_runtimeMaterial);
+            }
+
+            _runtimeMaterial = null;
+        }
+    }
+
+    private void RebuildMesh()
+    {
         Transform ropeEnd = GetRopeEndTransform();
         if (anchorTransform == null || ropeEnd == null)
         {
+            ClearMesh();
             return;
         }
 
+        int pointCount = CopyRopePath(ropeEnd);
+        if (pointCount < 2)
+        {
+            ClearMesh();
+            return;
+        }
+
+        int sides = Mathf.Clamp(tubeSides, 3, 12);
+        float width = GetCurrentRopeWidth();
+        float radius = width * 0.5f;
+        Color color = GetCurrentRopeColor();
+
+        EnsureMeshArrays(pointCount, sides);
+        FillTubeVertices(pointCount, sides, radius);
+        FillTubeTriangles(pointCount, sides);
+
+        _ropeMesh.Clear();
+        _ropeMesh.vertices = _vertices;
+        _ropeMesh.normals = _normals;
+        _ropeMesh.uv = _uvs;
+        _ropeMesh.triangles = _triangles;
+        _ropeMesh.RecalculateBounds();
+
+        ApplyMaterialAndColor(color);
+
+        if (_meshRenderer != null)
+        {
+            _meshRenderer.enabled = true;
+        }
+    }
+
+    private int CopyRopePath(Transform ropeEnd)
+    {
         if (pendulum != null && pendulum.RopePointCount > 1)
         {
             int pointCount = pendulum.RopePointCount;
-            if (_lineRenderer.positionCount != pointCount)
-            {
-                _lineRenderer.positionCount = pointCount;
-            }
+            EnsurePathArray(pointCount);
 
             for (int i = 0; i < pointCount; i++)
             {
-                _lineRenderer.SetPosition(i, pendulum.GetRopePoint(i));
+                _pathPoints[i] = pendulum.GetRopePoint(i);
             }
+
+            return pointCount;
+        }
+
+        EnsurePathArray(2);
+        _pathPoints[0] = anchorTransform.position;
+        _pathPoints[1] = ropeEnd.position;
+        return 2;
+    }
+
+    private void FillTubeVertices(int pointCount, int sides, float radius)
+    {
+        float accumulatedLength = 0f;
+
+        for (int i = 0; i < pointCount; i++)
+        {
+            if (i > 0)
+            {
+                accumulatedLength += Vector3.Distance(_pathPoints[i - 1], _pathPoints[i]);
+            }
+
+            Vector3 tangent = GetPointTangent(i, pointCount);
+            Vector3 normal = GetFrameNormal(tangent);
+            Vector3 binormal = Vector3.Cross(tangent, normal).normalized;
+
+            int vertexStart = i * sides;
+            for (int side = 0; side < sides; side++)
+            {
+                float angle = (Mathf.PI * 2f * side) / sides;
+                Vector3 offsetDirection = normal * Mathf.Cos(angle) + binormal * Mathf.Sin(angle);
+                Vector3 worldVertex = _pathPoints[i] + offsetDirection * radius;
+                int vertexIndex = vertexStart + side;
+
+                _vertices[vertexIndex] = transform.InverseTransformPoint(worldVertex);
+                _normals[vertexIndex] = transform.InverseTransformDirection(offsetDirection).normalized;
+                _uvs[vertexIndex] = new Vector2(side / (float)sides, accumulatedLength);
+            }
+        }
+    }
+
+    private void FillTubeTriangles(int pointCount, int sides)
+    {
+        int triangleIndex = 0;
+
+        for (int i = 0; i < pointCount - 1; i++)
+        {
+            int currentRing = i * sides;
+            int nextRing = (i + 1) * sides;
+
+            for (int side = 0; side < sides; side++)
+            {
+                int nextSide = (side + 1) % sides;
+
+                int a = currentRing + side;
+                int b = currentRing + nextSide;
+                int c = nextRing + side;
+                int d = nextRing + nextSide;
+
+                _triangles[triangleIndex++] = a;
+                _triangles[triangleIndex++] = c;
+                _triangles[triangleIndex++] = b;
+                _triangles[triangleIndex++] = b;
+                _triangles[triangleIndex++] = c;
+                _triangles[triangleIndex++] = d;
+            }
+        }
+    }
+
+    private Vector3 GetPointTangent(int index, int pointCount)
+    {
+        Vector3 tangent;
+
+        if (index <= 0)
+        {
+            tangent = _pathPoints[1] - _pathPoints[0];
+        }
+        else if (index >= pointCount - 1)
+        {
+            tangent = _pathPoints[pointCount - 1] - _pathPoints[pointCount - 2];
         }
         else
         {
-            // Fallback for edit mode or scenes that still use only anchor/bucket transforms.
-            if (_lineRenderer.positionCount != 2)
-            {
-                _lineRenderer.positionCount = 2;
-            }
-
-            _lineRenderer.SetPosition(0, anchorTransform.position);
-            _lineRenderer.SetPosition(1, bucketTransform.position);
+            tangent = _pathPoints[index + 1] - _pathPoints[index - 1];
         }
 
-        ApplyStretchFeedback();
+        return tangent.sqrMagnitude > 0.000001f ? tangent.normalized : Vector3.down;
     }
 
-    /// <summary>
-    /// Drives line width and colour from how far the rope is currently stretched beyond rest length.
-    /// No-op (and resets to the slack look) when stretch feedback is disabled or no pendulum is known.
-    /// </summary>
-    private void ApplyStretchFeedback()
+    private static Vector3 GetFrameNormal(Vector3 tangent)
+    {
+        Vector3 reference = Mathf.Abs(Vector3.Dot(tangent, Vector3.up)) > 0.92f
+            ? Vector3.right
+            : Vector3.up;
+
+        Vector3 normal = Vector3.Cross(reference, tangent);
+        return normal.sqrMagnitude > 0.000001f ? normal.normalized : Vector3.forward;
+    }
+
+    private float GetCurrentRopeWidth()
     {
         if (!reflectStretch || pendulum == null)
         {
-            _lineRenderer.startWidth = ropeWidth;
-            _lineRenderer.endWidth = ropeWidth;
-            return;
+            return ropeWidth;
         }
 
-        // Tension ratio comes from the custom pendulum spring force. Fall back to extension ratio
-        // if an older pendulum state is present before the first simulation step.
+        float tensionRatio = GetTensionRatio();
+        return ropeWidth * Mathf.Lerp(1f, stretchedWidthScale, tensionRatio);
+    }
+
+    private Color GetCurrentRopeColor()
+    {
+        if (!reflectStretch || pendulum == null)
+        {
+            return slackColor;
+        }
+
+        return Color.Lerp(slackColor, stretchedColor, GetTensionRatio());
+    }
+
+    private float GetTensionRatio()
+    {
+        if (pendulum == null)
+        {
+            return 0f;
+        }
+
         float denominator = Mathf.Max(0.0001f, fullStretchRatio);
         float extensionRatio = pendulum.RestLength > 0f
             ? Mathf.Clamp01((pendulum.CurrentRopeLength / pendulum.RestLength - 1f) / denominator)
             : 0f;
-        float tensionRatio = Mathf.Max(extensionRatio, pendulum.NormalizedRopeTension);
 
-        float width = ropeWidth * Mathf.Lerp(1f, stretchedWidthScale, tensionRatio);
-        _lineRenderer.startWidth = width;
-        _lineRenderer.endWidth = width;
-
-        Color color = Color.Lerp(slackColor, stretchedColor, tensionRatio);
-        _lineRenderer.startColor = color;
-        _lineRenderer.endColor = color;
+        return Mathf.Max(extensionRatio, pendulum.NormalizedRopeTension);
     }
 
     private void ResolveReferences()
@@ -172,46 +338,131 @@ public class RopeRenderer : MonoBehaviour
         return attachmentTransform != null ? attachmentTransform : bucketTransform;
     }
 
-    private void ConfigureLineRenderer()
+    private void EnsureRenderResources()
     {
-        if (_lineRenderer == null)
+        if (_meshFilter == null)
+        {
+            _meshFilter = GetComponent<MeshFilter>();
+        }
+
+        if (_meshRenderer == null)
+        {
+            _meshRenderer = GetComponent<MeshRenderer>();
+        }
+
+        if (_ropeMesh == null)
+        {
+            _ropeMesh = new Mesh
+            {
+                name = "Runtime Procedural Rope Mesh"
+            };
+            _ropeMesh.MarkDynamic();
+        }
+
+        if (_meshFilter != null && _meshFilter.sharedMesh != _ropeMesh)
+        {
+            _meshFilter.sharedMesh = _ropeMesh;
+        }
+    }
+
+    private void ApplyMaterialAndColor(Color color)
+    {
+        if (_meshRenderer == null)
         {
             return;
         }
 
-        _lineRenderer.positionCount = 2;
-        _lineRenderer.useWorldSpace = true;
-        _lineRenderer.startWidth = ropeWidth;
-        _lineRenderer.endWidth = ropeWidth;
-
-        if (ropeMaterial != null)
+        Material material = ropeMaterial != null ? ropeMaterial : GetOrCreateRuntimeMaterial();
+        if (material != null && _meshRenderer.sharedMaterial != material)
         {
-            _lineRenderer.material = ropeMaterial;
+            _meshRenderer.sharedMaterial = material;
+        }
+
+        if (_propertyBlock == null)
+        {
+            _propertyBlock = new MaterialPropertyBlock();
+        }
+
+        _meshRenderer.GetPropertyBlock(_propertyBlock);
+        _propertyBlock.SetColor(ColorId, color);
+        _propertyBlock.SetColor(BaseColorId, color);
+        _meshRenderer.SetPropertyBlock(_propertyBlock);
+    }
+
+    private Material GetOrCreateRuntimeMaterial()
+    {
+        if (_runtimeMaterial != null)
+        {
+            return _runtimeMaterial;
+        }
+
+        Shader shader = Shader.Find("Unlit/Color");
+        if (shader == null)
+        {
+            shader = Shader.Find("Standard");
+        }
+
+        if (shader == null)
+        {
+            return null;
+        }
+
+        _runtimeMaterial = new Material(shader)
+        {
+            name = "Runtime Procedural Rope Material"
+        };
+        return _runtimeMaterial;
+    }
+
+    private void EnsurePathArray(int pointCount)
+    {
+        if (_pathPoints == null || _pathPoints.Length != pointCount)
+        {
+            _pathPoints = new Vector3[pointCount];
         }
     }
 
-    private LineRenderer GetOrCreateLineRenderer()
+    private void EnsureMeshArrays(int pointCount, int sides)
     {
-        LineRenderer lineRenderer = GetComponent<LineRenderer>();
-        if (lineRenderer == null)
+        int vertexCount = pointCount * sides;
+        int triangleCount = (pointCount - 1) * sides * 6;
+
+        if (_vertices == null || _vertices.Length != vertexCount)
         {
-            lineRenderer = gameObject.AddComponent<LineRenderer>();
+            _vertices = new Vector3[vertexCount];
+            _normals = new Vector3[vertexCount];
+            _uvs = new Vector2[vertexCount];
         }
 
-        return lineRenderer;
+        if (_triangles == null || _triangles.Length != triangleCount)
+        {
+            _triangles = new int[triangleCount];
+        }
+    }
+
+    private void ClearMesh()
+    {
+        if (_ropeMesh != null)
+        {
+            _ropeMesh.Clear();
+        }
+
+        if (_meshRenderer != null)
+        {
+            _meshRenderer.enabled = false;
+        }
     }
 
     private void OnValidate()
     {
         ropeWidth = Mathf.Max(0.001f, ropeWidth);
+        tubeSides = Mathf.Clamp(tubeSides, 3, 12);
         fullStretchRatio = Mathf.Max(0.01f, fullStretchRatio);
         stretchedWidthScale = Mathf.Clamp(stretchedWidthScale, 0.1f, 1f);
 
-        LineRenderer lineRenderer = GetComponent<LineRenderer>();
-        if (lineRenderer != null)
+        if (_ropeMesh != null)
         {
-            lineRenderer.startWidth = ropeWidth;
-            lineRenderer.endWidth = ropeWidth;
+            RebuildMesh();
         }
     }
 }

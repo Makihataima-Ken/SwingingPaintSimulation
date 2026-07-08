@@ -50,7 +50,7 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowStreamConnector"
                 int active;
                 int cellHash;
                 int cellIndex;
-                float padding;
+                float sourceHoleIndex;
             };
 
             StructuredBuffer<OutflowParticle> _OutflowParticles;
@@ -96,13 +96,23 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowStreamConnector"
                     ? normalize(particle.velocityWorld)
                     : float3(0.0, -1.0, 0.0);
 
-                if (segmentLength < _MinimumConnectorLength)
+                if (hasNeighbor < 0.5)
                 {
-                    float centerBias = hasNeighbor > 0.5 ? 0.5 : 1.0;
-                    float3 center = lerp(start, end, centerBias);
+                    float isolatedTrailLength = max(
+                        max(_MinimumConnectorLength, segmentLength) * max(0.1, _TrailLengthMultiplier) * 3.1,
+                        particle.radius * max(10.0, _StreamRadiusMultiplier * 6.2));
+                    start = particle.positionWorld - velocityDirection * isolatedTrailLength;
+                    end = particle.positionWorld;
+                    segment = end - start;
+                    segmentLength = length(segment);
+                }
+                else if (segmentLength < _MinimumConnectorLength)
+                {
+                    float3 center = (start + end) * 0.5;
                     float lengthTarget = max(_MinimumConnectorLength, segmentLength) * max(0.1, _TrailLengthMultiplier);
                     start = center - velocityDirection * lengthTarget * 0.5;
                     end = center + velocityDirection * lengthTarget * 0.5;
+
                     segment = end - start;
                     segmentLength = length(segment);
                 }
