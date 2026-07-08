@@ -90,6 +90,7 @@ namespace SwingingPaint.UI
             DrawPaintControls();
             DrawStreamControls();
             DrawMotionControls();
+            DrawRopeParameterControls();
             DrawParticleControls();
             DrawCanvasControls();
 
@@ -395,8 +396,17 @@ namespace SwingingPaint.UI
             DrawTuningSlider("Start Angle", ref tuningControls.startAngle, -90f, 90f, true);
             DrawTuningSlider("Side Push", ref tuningControls.sidePushVelocity, -720f, 720f, true);
             DrawTuningSlider("Swing Direction", ref tuningControls.swingDirection, -180f, 180f, true);
-            DrawTuningSlider("Rope Length", ref tuningControls.ropeLength, 0.5f, 5f, true);
             DrawTuningSlider("Motion Damping", ref tuningControls.motionDamping, 0f, 1f);
+        }
+
+        private void DrawRopeParameterControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Rope Parameters");
+            DrawTuningSlider("Length", ref tuningControls.ropeLength, 0.5f, 5f, true);
+            DrawTuningSlider("Stiffness", ref tuningControls.ropeStiffness, 0.01f, 300f, true);
+            DrawTuningSlider("Elasticity", ref tuningControls.ropeElasticity, 0f, 5f, true);
+            DrawTuningSlider("Damping", ref tuningControls.ropeDamping, 0f, 5f);
         }
 
         private void DrawParticleControls()

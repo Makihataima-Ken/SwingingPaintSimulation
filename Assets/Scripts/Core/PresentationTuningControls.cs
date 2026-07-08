@@ -209,6 +209,18 @@ namespace SwingingPaint.Core
         [Min(0.01f)]
         public float ropeLength = 2f;
 
+        [Tooltip("Overall rope spring stiffness. Higher values make the rope resist stretching more.")]
+        [Min(0.01f)]
+        public float ropeStiffness = 50f;
+
+        [Tooltip("Rope elasticity factor. Higher values make the rope stretch more under the same load.")]
+        [Min(0f)]
+        public float ropeElasticity = 0.5f;
+
+        [Tooltip("Damping applied along each rope spring segment.")]
+        [Min(0f)]
+        public float ropeDamping = 0.5f;
+
         [Tooltip("Motion damping. Higher values reduce swing faster.")]
         [Min(0f)]
         public float motionDamping = 0.05f;
@@ -319,12 +331,22 @@ namespace SwingingPaint.Core
                 sidePushVelocity = physicsSettings.InitialLateralAngularVelocity;
                 swingDirection = physicsSettings.Direction;
                 ropeLength = physicsSettings.RestLength;
+                ropeStiffness = physicsSettings.RopeStiffness;
+                ropeElasticity = physicsSettings.RopeElasticity;
                 motionDamping = physicsSettings.Damping;
             }
 
             if (pendulum != null)
             {
                 ropeParticleCount = pendulum.ropeParticleCount;
+                ropeDamping = pendulum.ropeDamping;
+
+                if (physicsSettings == null)
+                {
+                    ropeLength = pendulum.restLength;
+                    ropeStiffness = pendulum.ropeStiffness;
+                    ropeElasticity = pendulum.ropeElasticity;
+                }
             }
 
             if (fluidSettings != null)
@@ -434,12 +456,18 @@ namespace SwingingPaint.Core
                 physicsSettings.SetInitialLateralAngularVelocity(sidePushVelocity);
                 physicsSettings.SetDirection(swingDirection);
                 physicsSettings.SetRestLength(ropeLength);
+                physicsSettings.SetRopeStiffness(ropeStiffness);
+                physicsSettings.SetRopeElasticity(ropeElasticity);
                 physicsSettings.SetDamping(motionDamping);
                 MarkDirty(physicsSettings);
             }
 
             if (pendulum != null)
             {
+                pendulum.restLength = ropeLength;
+                pendulum.ropeStiffness = ropeStiffness;
+                pendulum.ropeElasticity = ropeElasticity;
+                pendulum.ropeDamping = ropeDamping;
                 pendulum.ropeParticleCount = ropeParticleCount;
                 MarkDirty(pendulum);
             }
@@ -645,6 +673,9 @@ namespace SwingingPaint.Core
             startAngle = Mathf.Clamp(startAngle, -90f, 90f);
             sidePushVelocity = Mathf.Clamp(sidePushVelocity, -720f, 720f);
             ropeLength = Mathf.Max(0.01f, ropeLength);
+            ropeStiffness = Mathf.Max(0.01f, ropeStiffness);
+            ropeElasticity = Mathf.Max(0f, ropeElasticity);
+            ropeDamping = Mathf.Max(0f, ropeDamping);
             motionDamping = Mathf.Max(0f, motionDamping);
             ropeParticleCount = Mathf.Max(2, ropeParticleCount);
             developmentParticleCount = Mathf.Max(1, developmentParticleCount);
@@ -721,7 +752,7 @@ namespace SwingingPaint.Core
         {
             return new TuningSnapshot
             {
-                snapshotVersion = 7,
+                snapshotVersion = 8,
                 autoApply = autoApply,
                 autoResolveReferences = autoResolveReferences,
                 paintColor = paintColor,
@@ -766,6 +797,9 @@ namespace SwingingPaint.Core
                 sidePushVelocity = sidePushVelocity,
                 swingDirection = swingDirection,
                 ropeLength = ropeLength,
+                ropeStiffness = ropeStiffness,
+                ropeElasticity = ropeElasticity,
+                ropeDamping = ropeDamping,
                 motionDamping = motionDamping,
                 ropeParticleCount = ropeParticleCount,
                 presentationMode = presentationMode,
@@ -822,6 +856,9 @@ namespace SwingingPaint.Core
             sidePushVelocity = snapshot.sidePushVelocity;
             swingDirection = snapshot.swingDirection;
             ropeLength = snapshot.ropeLength;
+            ropeStiffness = snapshot.snapshotVersion >= 8 ? snapshot.ropeStiffness : ropeStiffness;
+            ropeElasticity = snapshot.snapshotVersion >= 8 ? snapshot.ropeElasticity : ropeElasticity;
+            ropeDamping = snapshot.snapshotVersion >= 8 ? snapshot.ropeDamping : ropeDamping;
             motionDamping = snapshot.motionDamping;
             ropeParticleCount = snapshot.snapshotVersion >= 7 ? snapshot.ropeParticleCount : ropeParticleCount;
             presentationMode = snapshot.presentationMode;
@@ -878,6 +915,9 @@ namespace SwingingPaint.Core
             public float sidePushVelocity;
             public float swingDirection;
             public float ropeLength;
+            public float ropeStiffness;
+            public float ropeElasticity;
+            public float ropeDamping;
             public float motionDamping;
             public int ropeParticleCount;
             public bool presentationMode;
