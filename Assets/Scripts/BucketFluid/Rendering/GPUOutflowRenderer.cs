@@ -10,6 +10,11 @@ namespace SwingingPaint.BucketFluid.Rendering
     /// </summary>
     public class GPUOutflowRenderer : MonoBehaviour
     {
+        private const string ParticleMaterialResourcePath = "BucketFluid/GPUOutflowParticleInstanced";
+        private const string ConnectorMaterialResourcePath = "BucketFluid/GPUOutflowStreamConnector";
+        private const string ParticleShaderName = "SwingingPaint/BucketFluid/GPUOutflowParticleInstanced";
+        private const string ConnectorShaderName = "SwingingPaint/BucketFluid/GPUOutflowStreamConnector";
+
         private static readonly int OutflowParticlesId = Shader.PropertyToID("_OutflowParticles");
         private static readonly int ParticleSizeId = Shader.PropertyToID("_ParticleSize");
         private static readonly int StreamRadiusMultiplierId = Shader.PropertyToID("_StreamRadiusMultiplier");
@@ -187,39 +192,57 @@ namespace SwingingPaint.BucketFluid.Rendering
 
             if (particleMaterial == null)
             {
-                if (_runtimeFallbackMaterial == null)
-                {
-                    Shader shader = Shader.Find("SwingingPaint/BucketFluid/GPUOutflowParticleInstanced");
-                    if (shader != null)
-                    {
-                        _runtimeFallbackMaterial = new Material(shader)
-                        {
-                            name = "Runtime GPU Outflow Material",
-                            enableInstancing = true
-                        };
-                    }
-                }
-
-                particleMaterial = _runtimeFallbackMaterial;
+                particleMaterial = GetOrCreateRuntimeMaterial(
+                    ref _runtimeFallbackMaterial,
+                    ParticleMaterialResourcePath,
+                    ParticleShaderName,
+                    "Runtime GPU Outflow Material");
             }
 
             if (connectorMaterial == null)
             {
-                if (_runtimeConnectorMaterial == null)
-                {
-                    Shader shader = Shader.Find("SwingingPaint/BucketFluid/GPUOutflowStreamConnector");
-                    if (shader != null)
-                    {
-                        _runtimeConnectorMaterial = new Material(shader)
-                        {
-                            name = "Runtime GPU Outflow Connector Material",
-                            enableInstancing = true
-                        };
-                    }
-                }
-
-                connectorMaterial = _runtimeConnectorMaterial;
+                connectorMaterial = GetOrCreateRuntimeMaterial(
+                    ref _runtimeConnectorMaterial,
+                    ConnectorMaterialResourcePath,
+                    ConnectorShaderName,
+                    "Runtime GPU Outflow Connector Material");
             }
+        }
+
+        private static Material GetOrCreateRuntimeMaterial(
+            ref Material runtimeMaterial,
+            string resourcePath,
+            string shaderName,
+            string materialName)
+        {
+            if (runtimeMaterial != null)
+            {
+                return runtimeMaterial;
+            }
+
+            Material resourceMaterial = Resources.Load<Material>(resourcePath);
+            if (resourceMaterial != null)
+            {
+                runtimeMaterial = new Material(resourceMaterial)
+                {
+                    name = materialName,
+                    enableInstancing = true
+                };
+                return runtimeMaterial;
+            }
+
+            Shader shader = Shader.Find(shaderName);
+            if (shader == null)
+            {
+                return null;
+            }
+
+            runtimeMaterial = new Material(shader)
+            {
+                name = materialName,
+                enableInstancing = true
+            };
+            return runtimeMaterial;
         }
 
         private bool ValidateRenderSetup()
