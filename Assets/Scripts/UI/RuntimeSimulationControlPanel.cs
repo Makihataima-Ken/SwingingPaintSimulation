@@ -162,6 +162,18 @@ namespace SwingingPaint.UI
 
         private void DrawStatus()
         {
+            string fluidParticleStatus = "n/a";
+            if (fluidRenderer != null && fluidRenderer.simulator != null)
+            {
+                fluidParticleStatus = $"{fluidRenderer.simulator.RuntimeActiveParticleCount}/{fluidRenderer.simulator.TargetParticleCount}";
+            }
+
+            string ropeParticleStatus = "n/a";
+            if (simulationManager != null && simulationManager.pendulum != null)
+            {
+                ropeParticleStatus = simulationManager.pendulum.ropeParticleCount.ToString();
+            }
+
             GUILayout.Space(8f);
             GUILayout.Label("Status");
             GUILayout.Label($"State: {(simulationManager != null ? (simulationManager.IsPaused ? "Paused" : "Running") : "n/a")}");
@@ -170,8 +182,8 @@ namespace SwingingPaint.UI
             GUILayout.Label($"Emitted/Tick: {(gpuOutflowController != null ? gpuOutflowController.EmittedParticlesThisTick.ToString() : "n/a")}");
             GUILayout.Label($"Canvas Writes/Tick: {(gpuOutflowController != null ? gpuOutflowController.CanvasGpuWritesThisTick.ToString() : "n/a")}");
             GUILayout.Label($"Bucket Holes: {(gpuOutflowController != null ? gpuOutflowController.EffectiveHoleCount.ToString() : "n/a")}");
-            GUILayout.Label($"Fluid Particles: {(fluidRenderer != null && fluidRenderer.simulator != null ? fluidRenderer.simulator.RuntimeActiveParticleCount + \"/\" + fluidRenderer.simulator.TargetParticleCount : "n/a")}");
-            GUILayout.Label($"Rope Particles: {(simulationManager != null && simulationManager.pendulum != null ? simulationManager.pendulum.ropeParticleCount.ToString() : "n/a")}");
+            GUILayout.Label($"Fluid Particles: {fluidParticleStatus}");
+            GUILayout.Label($"Rope Particles: {ropeParticleStatus}");
             GUILayout.Label($"Physical Flow: {(gpuOutflowController != null ? gpuOutflowController.CurrentPhysicalFlowRateCubicMetersPerSecond.ToString("F6") : "n/a")}");
         }
 
