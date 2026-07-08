@@ -50,7 +50,7 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowStreamConnector"
                 int active;
                 int cellHash;
                 int cellIndex;
-                float padding;
+                float sourceHoleIndex;
             };
 
             StructuredBuffer<OutflowParticle> _OutflowParticles;

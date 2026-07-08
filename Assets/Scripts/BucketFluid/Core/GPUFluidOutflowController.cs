@@ -22,6 +22,7 @@ namespace SwingingPaint.BucketFluid.Core
         private const int MaxVirtualHoleCount = 4;
         private const float MinPaintQuantityUnitToCubicMeters = 0.000001f;
         private const float MaxPaintQuantityUnitToCubicMeters = 0.01f;
+        private const float MinOpenHoleDiameter = 0.000001f;
         private const float MinOutflowLifetimeSeconds = 0.1f;
         private const float MaxOutflowLifetimeSeconds = 60f;
 
@@ -157,7 +158,7 @@ namespace SwingingPaint.BucketFluid.Core
             public int active;
             public int cellHash;
             public int cellIndex;
-            public float padding;
+            public float sourceHoleIndex;
         }
 
         public enum HolePattern
@@ -310,7 +311,8 @@ namespace SwingingPaint.BucketFluid.Core
         public float EffectiveOutflowLifetime => GetSafeOutflowLifetime(outflowLifetime);
         public ComputeBuffer OutflowParticleBuffer => _outflowBuffer;
         public ComputeBuffer IndirectArgsBuffer => _indirectArgsBuffer;
-        public int EffectiveHoleCount => GetVirtualHoleCount();
+        public int ConfiguredHoleCount => GetVirtualHoleCount();
+        public int EffectiveHoleCount => GetOpenHoleCount(GetHoleDiameter());
 
         private ComputeBuffer _outflowBuffer;
         private ComputeBuffer _outflowCellCounts;
@@ -689,7 +691,10 @@ namespace SwingingPaint.BucketFluid.Core
             CurrentPhysicalFlowRateCubicMetersPerSecond = physicalFlowRate;
             float physicalExitSpeed = GetPhysicalExitSpeed(physicalHead, gravityMagnitude, viscosity);
             float particleVolume = GetOutflowParticleVolume(outflowParticleRadius);
-            int physicalEmissionBudget = GetPhysicalEmissionBudget(physicalFlowRate, particleVolume, deltaTime);
+            float volumePerEmission = preserveTotalFlow && virtualHoleCount > 1
+                ? particleVolume / Mathf.Max(1, virtualHoleCount)
+                : particleVolume;
+            int physicalEmissionBudget = GetPhysicalEmissionBudget(physicalFlowRate, volumePerEmission, deltaTime);
             float shaderPaintFlowRate = usePhysicalPourModel
                 ? flowRate / perHoleFlowDivisor
                 : effectiveFlowRate / perHoleFlowDivisor;
@@ -810,7 +815,7 @@ namespace SwingingPaint.BucketFluid.Core
             outflowComputeShader.SetFloat(StreamVisualContinuityId, Mathf.Clamp01(streamVisualContinuity));
             outflowComputeShader.SetVector(PaintColorId, color);
             float particleAmountScale = usePhysicalPourModel
-                ? Mathf.Clamp(particleVolume / Mathf.Max(0.0000001f, GetOutflowParticleVolume(0.0065f)), 0.08f, 3f)
+                ? Mathf.Clamp(volumePerEmission / Mathf.Max(0.0000001f, GetOutflowParticleVolume(0.0065f)), 0.08f, 3f)
                 : Mathf.Clamp(effectiveFlowRate, 0.15f, 3f);
             outflowComputeShader.SetFloat(ParticleAmountId, particleAmount * amountScale * particleAmountScale);
             outflowComputeShader.SetVector(CanvasPlanePointId, canvasPoint);
@@ -889,9 +894,19 @@ namespace SwingingPaint.BucketFluid.Core
             }
         }
 
+        private int GetOpenHoleCount(float diameter)
+        {
+            return diameter > MinOpenHoleDiameter ? GetVirtualHoleCount() : 0;
+        }
+
         private float GetSafeMultiHoleRingRadius(float holeRadius)
         {
             float requestedRadius = Mathf.Max(0f, multiHoleRingRadius);
+            if (GetVirtualHoleCount() > 1)
+            {
+                requestedRadius = Mathf.Max(requestedRadius, GetMinimumVisibleMultiHoleRingRadius(holeRadius));
+            }
+
             if (boundary == null)
             {
                 return requestedRadius;
@@ -899,6 +914,14 @@ namespace SwingingPaint.BucketFluid.Core
 
             float maxInsideBottom = Mathf.Max(0f, boundary.bottomRadius - Mathf.Max(0f, holeRadius));
             return Mathf.Min(requestedRadius, maxInsideBottom);
+        }
+
+        private float GetMinimumVisibleMultiHoleRingRadius(float holeRadius)
+        {
+            float bucketParticleRadius = settings != null ? settings.particleRadius : 0.035f;
+            float outflowParticleRadius = GetOutflowParticleRadius(bucketParticleRadius, GetHoleDiameter());
+            float visualHalfWidth = outflowParticleRadius * Mathf.Max(1f, EffectiveVisualStreamRadiusMultiplier);
+            return Mathf.Max(0.08f, Mathf.Max(holeRadius, outflowParticleRadius) * 3.25f, visualHalfWidth * 2.75f);
         }
 
         private static Vector3 GetHoleOffset(

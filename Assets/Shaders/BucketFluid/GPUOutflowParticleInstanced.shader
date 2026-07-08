@@ -48,7 +48,7 @@ Shader "SwingingPaint/BucketFluid/GPUOutflowParticleInstanced"
                 int active;
                 int cellHash;
                 int cellIndex;
-                float padding;
+                float sourceHoleIndex;
             };
 
             StructuredBuffer<OutflowParticle> _OutflowParticles;

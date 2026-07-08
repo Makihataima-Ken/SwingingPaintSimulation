@@ -131,6 +131,7 @@ namespace SwingingPaint.BucketFluid.Rendering
         {
             GUILayout.Label($"GPU Outflow Enabled: {gpuOutflowController != null && gpuOutflowController.gpuOutflowEnabled}");
             GUILayout.Label($"GPU Infinite Supply: {gpuOutflowController != null && gpuOutflowController.infinitePaintSupplyForTuning}");
+            GUILayout.Label($"GPU Bucket Holes: {(gpuOutflowController != null ? gpuOutflowController.EffectiveHoleCount : 0)}");
             GUILayout.Label($"GPU Outflow Capacity: {(gpuOutflowController != null ? gpuOutflowController.OutflowCapacity : 0)}");
             GUILayout.Label($"GPU Outflow Active: {(gpuOutflowController != null ? gpuOutflowController.ActiveOutflowParticles : 0)}");
             GUILayout.Label($"GPU Paint Remaining: {(gpuOutflowController != null ? gpuOutflowController.RemainingPaintQuantityUnits : 0f):F2} units / {(gpuOutflowController != null ? gpuOutflowController.RemainingPaintFraction * 100f : 0f):F1}%");

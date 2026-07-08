@@ -56,7 +56,7 @@ struct OutflowParticle
     int active;
     int cellHash;
     int cellIndex;
-    float padding;
+    float sourceHoleIndex;
 };
 
 RWStructuredBuffer<FluidParticle> bucketParticles;
@@ -710,6 +710,16 @@ float GetHoleRadius(uint index)
     return max(0.0, HoleRadii.x);
 }
 
+bool ParticlesShareHole(OutflowParticle a, OutflowParticle b)
+{
+    if (GetSafeHoleCount() <= 1u)
+    {
+        return true;
+    }
+
+    return abs(a.sourceHoleIndex - b.sourceHoleIndex) < 0.5;
+}
+
 float GetPerHoleBudget(uint holeCount)
 {
     return ceil((float)MaxExtractionsPerStep / max(1.0, (float)holeCount));
@@ -777,7 +787,7 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
     if (PhysicalPourMode != 0u)
     {
         uint holeCount = GetSafeHoleCount();
-        uint holeIndex = GetHoleIndex(id.x);
+        uint holeIndex = GetHoleIndex(id.x + FrameIndex);
         float holeRadius = GetHoleRadius(holeIndex);
         if (id.x >= MaxExtractionsPerStep || PaintFlowRate <= 0.0 || holeRadius <= 0.0)
         {
@@ -833,7 +843,7 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
         outParticle.active = 1;
         outParticle.cellHash = -1;
         outParticle.cellIndex = -1;
-        outParticle.padding = 0.0;
+        outParticle.sourceHoleIndex = (float)holeIndex;
         outflowParticles[slot] = outParticle;
         InterlockedAdd(outflowCounters[1], 1u);
         return;
@@ -959,7 +969,7 @@ void ExtractOutflow(uint3 id : SV_DispatchThreadID)
     outParticle.active = 1;
     outParticle.cellHash = -1;
     outParticle.cellIndex = -1;
-    outParticle.padding = 0.0;
+    outParticle.sourceHoleIndex = (float)holeIndex;
     outflowParticles[slot] = outParticle;
 
     if (ConsumeBucketParticles != 0u)
@@ -1097,6 +1107,11 @@ void ComputeOutflowDensity(uint3 id : SV_DispatchThreadID)
                         continue;
                     }
 
+                    if (!ParticlesShareHole(particle, neighbor))
+                    {
+                        continue;
+                    }
+
                     float3 offset = particle.positionWorld - neighbor.positionWorld;
                     float distanceSq = dot(offset, offset);
                     if (distanceSq > interactionRadiusSq)
@@ -1164,6 +1179,11 @@ void SolveOutflowConstraints(uint3 id : SV_DispatchThreadID)
 
                     OutflowParticle neighbor = outflowParticles[neighborIndex];
                     if (neighbor.active == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!ParticlesShareHole(particle, neighbor))
                     {
                         continue;
                     }
@@ -1236,6 +1256,11 @@ void ApplyOutflowViscosity(uint3 id : SV_DispatchThreadID)
 
                     OutflowParticle neighbor = outflowParticles[neighborIndex];
                     if (neighbor.active == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!ParticlesShareHole(particle, neighbor))
                     {
                         continue;
                     }
@@ -1366,7 +1391,6 @@ void BuildStreamConnectors(uint3 id : SV_DispatchThreadID)
     }
 
     particle.cellIndex = -1;
-    particle.padding = 0.0;
 
     float3 gravityDirection = length(EffectiveWorldGravity) > Epsilon
         ? normalize(EffectiveWorldGravity)
@@ -1417,6 +1441,11 @@ void BuildStreamConnectors(uint3 id : SV_DispatchThreadID)
                         continue;
                     }
 
+                    if (!ParticlesShareHole(particle, neighbor))
+                    {
+                        continue;
+                    }
+
                     float3 offset = neighbor.positionWorld - particle.positionWorld;
                     float distanceSq = dot(offset, offset);
                     if (distanceSq <= Epsilon || distanceSq > adaptiveBreakSq)
@@ -1440,7 +1469,6 @@ void BuildStreamConnectors(uint3 id : SV_DispatchThreadID)
                     {
                         bestScore = score;
                         bestNeighbor = neighborIndex;
-                        particle.padding = distance;
                     }
                 }
             }

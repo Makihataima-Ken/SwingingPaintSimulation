@@ -41,6 +41,7 @@ namespace SwingingPaint.Core
         public GPUFluidOutflowController outflowController;
         public GPUOutflowRenderer outflowRenderer;
         public CanvasPaintSurface paintSurface;
+        public Pendulum pendulum;
 
         [Header("01 - Main Paint Controls - Change These First")]
         [Tooltip("The official paint color. Applies to bucket fluid, falling stream, and deposited paint.")]
@@ -57,6 +58,9 @@ namespace SwingingPaint.Core
         [Tooltip("Hole diameter at PaintHole. Bigger hole means stronger/faster pour. Applies immediately.")]
         [Min(0f)]
         public float holeDiameter = 0.035f;
+
+        [Tooltip("Number of virtual outlet holes in the bucket. Supports 1, 2, or 4 holes and applies immediately.")]
+        public int bucketHoleCount = 1;
 
         [Tooltip("Higher viscosity means heavier paint: more cohesive stream and less spread on the surface. Applies immediately.")]
         [Min(0f)]
@@ -209,6 +213,10 @@ namespace SwingingPaint.Core
         [Min(0f)]
         public float motionDamping = 0.05f;
 
+        [Tooltip("Number of point-mass particles used by the spring rope. Higher values make rope shape smoother.")]
+        [Min(2)]
+        public int ropeParticleCount = 8;
+
         [Header("05 - Quality / Performance")]
         [Tooltip("Use Presentation Particle Count instead of Development Particle Count. Needs Reset/Restart.")]
         public bool presentationMode;
@@ -314,6 +322,11 @@ namespace SwingingPaint.Core
                 motionDamping = physicsSettings.Damping;
             }
 
+            if (pendulum != null)
+            {
+                ropeParticleCount = pendulum.ropeParticleCount;
+            }
+
             if (fluidSettings != null)
             {
                 bucketFillAmount = fluidSettings.fillHeightPercent;
@@ -324,6 +337,7 @@ namespace SwingingPaint.Core
 
             if (outflowController != null)
             {
+                bucketHoleCount = outflowController.ConfiguredHoleCount;
                 streamWidth = outflowController.streamRadiusMultiplier;
                 streamContinuity = Mathf.InverseLerp(0.06f, 0.24f, outflowController.streamBreakDistance);
                 streamVisualContinuity = outflowController.streamVisualContinuity;
@@ -424,6 +438,12 @@ namespace SwingingPaint.Core
                 MarkDirty(physicsSettings);
             }
 
+            if (pendulum != null)
+            {
+                pendulum.ropeParticleCount = ropeParticleCount;
+                MarkDirty(pendulum);
+            }
+
             if (fluidSettings != null)
             {
                 fluidSettings.paintColor = paintColor;
@@ -441,6 +461,7 @@ namespace SwingingPaint.Core
                 outflowController.infinitePaintSupplyForTuning = infinitePaintSupplyForTuning;
                 outflowController.livePaintColorWhileFalling = livePaintColorWhileFalling;
                 outflowController.holeDiameter = holeDiameter;
+                outflowController.holePattern = GetHolePattern(bucketHoleCount);
                 outflowController.outflowLifetime = outflowLifetime;
                 outflowController.streamRadiusMultiplier = streamWidth;
                 outflowController.streamVisualContinuity = streamVisualContinuity;
@@ -571,6 +592,16 @@ namespace SwingingPaint.Core
             {
                 paintSurface = FindObjectOfType<CanvasPaintSurface>();
             }
+
+            if (pendulum == null && simulationManager != null)
+            {
+                pendulum = simulationManager.pendulum;
+            }
+
+            if (pendulum == null)
+            {
+                pendulum = FindObjectOfType<Pendulum>();
+            }
         }
 
         private void ClampValues()
@@ -582,6 +613,7 @@ namespace SwingingPaint.Core
             bucketFillAmount = Mathf.Clamp(bucketFillAmount, 0.05f, 1f);
             flowRate = Mathf.Max(0f, flowRate);
             holeDiameter = Mathf.Max(0f, holeDiameter);
+            bucketHoleCount = GetSupportedBucketHoleCount(bucketHoleCount);
             viscosity = Mathf.Max(0f, viscosity);
             logicalPaintQuantity = Mathf.Max(0f, logicalPaintQuantity);
             streamWidth = Mathf.Clamp(streamWidth, 0.5f, 4f);
@@ -614,8 +646,32 @@ namespace SwingingPaint.Core
             sidePushVelocity = Mathf.Clamp(sidePushVelocity, -720f, 720f);
             ropeLength = Mathf.Max(0.01f, ropeLength);
             motionDamping = Mathf.Max(0f, motionDamping);
+            ropeParticleCount = Mathf.Max(2, ropeParticleCount);
             developmentParticleCount = Mathf.Max(1, developmentParticleCount);
             presentationParticleCount = Mathf.Max(1, presentationParticleCount);
+        }
+
+        private static GPUFluidOutflowController.HolePattern GetHolePattern(int holeCount)
+        {
+            switch (GetSupportedBucketHoleCount(holeCount))
+            {
+                case 2:
+                    return GPUFluidOutflowController.HolePattern.TwoOpposite;
+                case 4:
+                    return GPUFluidOutflowController.HolePattern.FourCardinal;
+                default:
+                    return GPUFluidOutflowController.HolePattern.Single;
+            }
+        }
+
+        private static int GetSupportedBucketHoleCount(int holeCount)
+        {
+            if (holeCount <= 1)
+            {
+                return 1;
+            }
+
+            return holeCount <= 2 ? 2 : 4;
         }
 
 #if UNITY_EDITOR
@@ -665,13 +721,14 @@ namespace SwingingPaint.Core
         {
             return new TuningSnapshot
             {
-                snapshotVersion = 5,
+                snapshotVersion = 7,
                 autoApply = autoApply,
                 autoResolveReferences = autoResolveReferences,
                 paintColor = paintColor,
                 bucketFillAmount = bucketFillAmount,
                 flowRate = flowRate,
                 holeDiameter = holeDiameter,
+                bucketHoleCount = bucketHoleCount,
                 viscosity = viscosity,
                 logicalPaintQuantity = logicalPaintQuantity,
                 infinitePaintSupplyForTuning = infinitePaintSupplyForTuning,
@@ -710,6 +767,7 @@ namespace SwingingPaint.Core
                 swingDirection = swingDirection,
                 ropeLength = ropeLength,
                 motionDamping = motionDamping,
+                ropeParticleCount = ropeParticleCount,
                 presentationMode = presentationMode,
                 developmentParticleCount = developmentParticleCount,
                 presentationParticleCount = presentationParticleCount
@@ -724,6 +782,7 @@ namespace SwingingPaint.Core
             bucketFillAmount = snapshot.bucketFillAmount;
             flowRate = snapshot.flowRate;
             holeDiameter = snapshot.holeDiameter;
+            bucketHoleCount = snapshot.snapshotVersion >= 6 ? snapshot.bucketHoleCount : bucketHoleCount;
             viscosity = snapshot.viscosity;
             logicalPaintQuantity = snapshot.logicalPaintQuantity;
             infinitePaintSupplyForTuning = snapshot.infinitePaintSupplyForTuning;
@@ -764,6 +823,7 @@ namespace SwingingPaint.Core
             swingDirection = snapshot.swingDirection;
             ropeLength = snapshot.ropeLength;
             motionDamping = snapshot.motionDamping;
+            ropeParticleCount = snapshot.snapshotVersion >= 7 ? snapshot.ropeParticleCount : ropeParticleCount;
             presentationMode = snapshot.presentationMode;
             developmentParticleCount = snapshot.developmentParticleCount;
             presentationParticleCount = snapshot.presentationParticleCount;
@@ -780,6 +840,7 @@ namespace SwingingPaint.Core
             public float bucketFillAmount;
             public float flowRate;
             public float holeDiameter;
+            public int bucketHoleCount;
             public float viscosity;
             public float logicalPaintQuantity;
             public bool infinitePaintSupplyForTuning;
@@ -818,6 +879,7 @@ namespace SwingingPaint.Core
             public float swingDirection;
             public float ropeLength;
             public float motionDamping;
+            public int ropeParticleCount;
             public bool presentationMode;
             public int developmentParticleCount;
             public int presentationParticleCount;

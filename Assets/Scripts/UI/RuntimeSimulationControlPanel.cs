@@ -90,6 +90,7 @@ namespace SwingingPaint.UI
             DrawPaintControls();
             DrawStreamControls();
             DrawMotionControls();
+            DrawParticleControls();
             DrawCanvasControls();
 
             GUILayout.EndScrollView();
@@ -169,6 +170,8 @@ namespace SwingingPaint.UI
             GUILayout.Label($"Emitted/Tick: {(gpuOutflowController != null ? gpuOutflowController.EmittedParticlesThisTick.ToString() : "n/a")}");
             GUILayout.Label($"Canvas Writes/Tick: {(gpuOutflowController != null ? gpuOutflowController.CanvasGpuWritesThisTick.ToString() : "n/a")}");
             GUILayout.Label($"Bucket Holes: {(gpuOutflowController != null ? gpuOutflowController.EffectiveHoleCount.ToString() : "n/a")}");
+            GUILayout.Label($"Fluid Particles: {(fluidRenderer != null && fluidRenderer.simulator != null ? fluidRenderer.simulator.RuntimeActiveParticleCount + \"/\" + fluidRenderer.simulator.TargetParticleCount : "n/a")}");
+            GUILayout.Label($"Rope Particles: {(simulationManager != null && simulationManager.pendulum != null ? simulationManager.pendulum.ropeParticleCount.ToString() : "n/a")}");
             GUILayout.Label($"Physical Flow: {(gpuOutflowController != null ? gpuOutflowController.CurrentPhysicalFlowRateCubicMetersPerSecond.ToString("F6") : "n/a")}");
         }
 
@@ -319,9 +322,33 @@ namespace SwingingPaint.UI
 
             DrawTuningSlider("Flow Rate", ref tuningControls.flowRate, 0f, 10f);
             DrawTuningSlider("Hole Diameter", ref tuningControls.holeDiameter, 0f, 0.12f);
+            DrawHoleCountControls();
             DrawTuningSlider("Viscosity", ref tuningControls.viscosity, 0f, 5f);
             DrawTuningSlider("Paint Quantity", ref tuningControls.logicalPaintQuantity, 0f, 250f);
             DrawTuningToggle("Infinite Paint", ref tuningControls.infinitePaintSupplyForTuning);
+        }
+
+        private void DrawHoleCountControls()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Hole Count", GUILayout.Width(115f));
+            DrawHoleCountButton(1);
+            DrawHoleCountButton(2);
+            DrawHoleCountButton(4);
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawHoleCountButton(int holeCount)
+        {
+            bool selected = tuningControls.bucketHoleCount == holeCount;
+            GUI.enabled = !selected;
+            if (GUILayout.Button(selected ? $"[{holeCount}]" : holeCount.ToString()))
+            {
+                tuningControls.bucketHoleCount = holeCount;
+                ApplyTuning();
+            }
+
+            GUI.enabled = true;
         }
 
         private void DrawStreamControls()
@@ -358,6 +385,48 @@ namespace SwingingPaint.UI
             DrawTuningSlider("Swing Direction", ref tuningControls.swingDirection, -180f, 180f, true);
             DrawTuningSlider("Rope Length", ref tuningControls.ropeLength, 0.5f, 5f, true);
             DrawTuningSlider("Motion Damping", ref tuningControls.motionDamping, 0f, 1f);
+        }
+
+        private void DrawParticleControls()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("Particles");
+
+            bool presentationMode = tuningControls.presentationMode;
+            bool newPresentationMode = GUILayout.Toggle(presentationMode, "Presentation Fluid Count");
+            if (newPresentationMode != presentationMode)
+            {
+                tuningControls.presentationMode = newPresentationMode;
+                ApplyTuning();
+                _restartRecommended = true;
+            }
+
+            DrawActiveFluidParticleCount();
+            DrawTuningIntSlider("Rope Particles", ref tuningControls.ropeParticleCount, 2, 64, true);
+        }
+
+        private void DrawActiveFluidParticleCount()
+        {
+            int fluidParticleCount = tuningControls.presentationMode
+                ? tuningControls.presentationParticleCount
+                : tuningControls.developmentParticleCount;
+
+            if (!DrawIntSlider("Fluid Particles", ref fluidParticleCount, 100, 20000))
+            {
+                return;
+            }
+
+            if (tuningControls.presentationMode)
+            {
+                tuningControls.presentationParticleCount = fluidParticleCount;
+            }
+            else
+            {
+                tuningControls.developmentParticleCount = fluidParticleCount;
+            }
+
+            ApplyTuning();
+            _restartRecommended = true;
         }
 
         private void DrawCanvasControls()
@@ -466,6 +535,41 @@ namespace SwingingPaint.UI
             GUILayout.EndHorizontal();
 
             if (Mathf.Approximately(value, newValue))
+            {
+                return false;
+            }
+
+            value = newValue;
+            return true;
+        }
+
+        private void DrawTuningIntSlider(string label, ref int value, int min, int max, bool restartRequired = false)
+        {
+            if (DrawIntSlider(label, ref value, min, max))
+            {
+                ApplyTuning();
+                if (restartRequired)
+                {
+                    _restartRecommended = true;
+                }
+            }
+        }
+
+        private bool DrawIntSlider(string label, ref int value, int min, int max)
+        {
+            float sliderWidth = Mathf.Max(80f, panelRect.width - 230f);
+            int safeMin = Mathf.Min(min, max);
+            int safeMax = Mathf.Max(min, max);
+            int safeValue = Mathf.Clamp(value, safeMin, safeMax);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, GUILayout.Width(115f));
+            float sliderValue = GUILayout.HorizontalSlider(safeValue, safeMin, safeMax, GUILayout.Width(sliderWidth));
+            int newValue = Mathf.RoundToInt(sliderValue);
+            GUILayout.Label(newValue.ToString(), GUILayout.Width(50f));
+            GUILayout.EndHorizontal();
+
+            if (value == newValue)
             {
                 return false;
             }
