@@ -310,6 +310,7 @@ namespace SwingingPaint.BucketFluid.Core
         public float EffectiveOutflowLifetime => GetSafeOutflowLifetime(outflowLifetime);
         public ComputeBuffer OutflowParticleBuffer => _outflowBuffer;
         public ComputeBuffer IndirectArgsBuffer => _indirectArgsBuffer;
+        public int EffectiveHoleCount => GetVirtualHoleCount();
 
         private ComputeBuffer _outflowBuffer;
         private ComputeBuffer _outflowCellCounts;

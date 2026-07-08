@@ -168,6 +168,7 @@ namespace SwingingPaint.UI
             GUILayout.Label($"Active Outflow: {(gpuOutflowController != null ? gpuOutflowController.ActiveOutflowParticles.ToString() : "n/a")}");
             GUILayout.Label($"Emitted/Tick: {(gpuOutflowController != null ? gpuOutflowController.EmittedParticlesThisTick.ToString() : "n/a")}");
             GUILayout.Label($"Canvas Writes/Tick: {(gpuOutflowController != null ? gpuOutflowController.CanvasGpuWritesThisTick.ToString() : "n/a")}");
+            GUILayout.Label($"Bucket Holes: {(gpuOutflowController != null ? gpuOutflowController.EffectiveHoleCount.ToString() : "n/a")}");
             GUILayout.Label($"Physical Flow: {(gpuOutflowController != null ? gpuOutflowController.CurrentPhysicalFlowRateCubicMetersPerSecond.ToString("F6") : "n/a")}");
         }
 
