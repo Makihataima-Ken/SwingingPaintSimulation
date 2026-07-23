@@ -80,4 +80,4 @@ If a parameter change does not immediately affect the current motion, the runtim
 
 ## License
 
-No explicit license file is currently included in this repository.
+MIT License 
